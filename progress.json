@@ -1,0 +1,232 @@
+{
+  "project": "World Cup Probability Dashboard 2026",
+  "deadline": "2026-07-19",
+  "repo": "",
+  "last_updated": "2026-06-14",
+  "context": "产品设计阶段完成（见 docs/）。开源+公开网站；架构=托管/后台采集只读；节奏=A先行(托管锦标赛)→B实时增量。详见 docs/project-context.md 与 docs/architecture.md",
+  "tasks": [
+    {
+      "id": "P0-1",
+      "phase": "Phase 0: 模型验证",
+      "name": "项目初始化",
+      "description": "git init + 目录骨架 + .env.example + .gitignore(含.env) + requirements.txt + CLAUDE.md + progress.json",
+      "dependencies": [],
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-14",
+      "note": "骨架按 architecture.md：backend/{models,api,data,simulation}+frontend+data/{raw,processed}; .env.example 占位4个key; .gitignore 防key泄露+忽略大数据/DB"
+    },
+    {
+      "id": "P0-2",
+      "phase": "Phase 0: 模型验证",
+      "name": "历史数据获取",
+      "description": "2018/2022 WC 比赛结果（回测用）+ Elo 所需的国际赛历史（2022-2026）。先确定来源：API-Football 历史端点 vs 现成数据集(Kaggle)",
+      "dependencies": ["P0-1"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P0-3",
+      "phase": "Phase 0: 模型验证",
+      "name": "Elo rating 实现",
+      "description": "Elo 评分算法 + 各队实力分计算（带时间衰减/K因子）",
+      "dependencies": ["P0-2"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P0-4",
+      "phase": "Phase 0: 模型验证",
+      "name": "Dixon-Coles 实现",
+      "description": "攻防参数估计 + 低分偏差修正(ρ) + 时间衰减函数",
+      "dependencies": ["P0-3"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P0-5",
+      "phase": "Phase 0: 模型验证",
+      "name": "冷门对阵收缩",
+      "description": "用 Elo 先验做 Dixon-Coles 攻防参数 shrinkage，防止跨洲稀疏对阵出离谱预测",
+      "dependencies": ["P0-4"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P0-6",
+      "phase": "Phase 0: 模型验证",
+      "name": "单场预测管线",
+      "description": "输入两队 → 输出胜/平/负概率 + 比分分布（Poisson 输出）",
+      "dependencies": ["P0-5"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P0-7",
+      "phase": "Phase 0: 模型验证",
+      "name": "回测脚本",
+      "description": "对 2018/2022 WC 每场比赛跑赛前预测 vs 实际结果",
+      "dependencies": ["P0-6"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P0-8",
+      "phase": "Phase 0: 模型验证",
+      "name": "评估指标",
+      "description": "Brier Score + Calibration Plot + 对标纯 Elo 基准 + 博彩赔率反推（如可得）",
+      "dependencies": ["P0-7"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P0-9",
+      "phase": "Phase 0: 模型验证",
+      "name": "回测结论与决策",
+      "description": "校准曲线是否贴对角线？准确率多少？撑不撑得起？是否进 Phase 1",
+      "dependencies": ["P0-8"],
+      "passes": false,
+      "assignee": "SYF"
+    },
+    {
+      "id": "P1-1",
+      "phase": "Phase 1: 托管锦标赛(A)",
+      "name": "实时数据采集层",
+      "description": "API-Football + football-data.org 双源 + 交叉验证 + 三层缓存",
+      "dependencies": ["P0-9"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P1-2",
+      "phase": "Phase 1: 托管锦标赛(A)",
+      "name": "后台 worker",
+      "description": "定时采集 + 赛后触发 Monte Carlo 重算晋级概率",
+      "dependencies": ["P1-1"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P1-3",
+      "phase": "Phase 1: 托管锦标赛(A)",
+      "name": "Monte Carlo 锦标赛模拟器",
+      "description": "10000 次向量化模拟整个锦标赛，聚合各队晋级/夺冠概率",
+      "dependencies": ["P1-1"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P1-4",
+      "phase": "Phase 1: 托管锦标赛(A)",
+      "name": "FastAPI + SQLite schema",
+      "description": "只读端点 + DB schema(teams/matches/events/predictions/tournament_probs 等) + 持久化方案",
+      "dependencies": ["P1-1"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P1-5",
+      "phase": "Phase 1: 托管锦标赛(A)",
+      "name": "前端骨架 + 4 页面",
+      "description": "React+Recharts 骨架；总览页(夺冠榜+视图切换+今日比赛+今日变动)/球队详情(晋级阶梯+bracket)/比赛详情(赛前预测,实时留位)/方法论页",
+      "dependencies": ["P1-4"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P1-6",
+      "phase": "Phase 1: 托管锦标赛(A)",
+      "name": "透明度层",
+      "description": "置信区间/阴影带 + 模型依据展开 + 历史准确率 + 免责声明",
+      "dependencies": ["P1-5"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P1-7",
+      "phase": "Phase 1: 托管锦标赛(A)",
+      "name": "部署上线",
+      "description": "前端静态托管(Vercel/CF Pages) + 后端 worker(Fly/小VPS) + DB持久化 + .env 注入",
+      "dependencies": ["P1-6"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P1-8",
+      "phase": "Phase 1: 托管锦标赛(A)",
+      "name": "A 阶段验收",
+      "description": "公开站能访问 + 晋级概率随赛果更新 + 透明度可见",
+      "dependencies": ["P1-7"],
+      "passes": false,
+      "assignee": "SYF"
+    },
+    {
+      "id": "P2-1",
+      "phase": "Phase 2: 实时增量(B)",
+      "name": "实时事件采集 + 实时胜率模型",
+      "description": "赛中轮询事件(付费API) + Poisson 剩余时间模拟 + game state 修正",
+      "dependencies": ["P1-8"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P2-2",
+      "phase": "Phase 2: 实时增量(B)",
+      "name": "实时推送 + 曲线 + 转折点",
+      "description": "WebSocket/SSE 推送 + 比赛详情页实时曲线 + 转折点标注('72′红牌,胜率61%→38%')",
+      "dependencies": ["P2-1"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P2-3",
+      "phase": "Phase 2: 实时增量(B)",
+      "name": "晨起回看 + 飞书推送",
+      "description": "后台存曲线 + 胜率跳变触发事件标注 + 晨起摘要卡片 + 飞书推送",
+      "dependencies": ["P2-2"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P2-4",
+      "phase": "Phase 2: 实时增量(B)",
+      "name": "B 阶段验收",
+      "description": "重点场实时曲线跑通 + 晨起回看可用",
+      "dependencies": ["P2-3"],
+      "passes": false,
+      "assignee": "SYF"
+    },
+    {
+      "id": "P3-1",
+      "phase": "Phase 3: 打磨",
+      "name": "移动端 + 分享 + bracket",
+      "description": "移动端适配 + 分享/截图 + 完整 bracket 可视化",
+      "dependencies": ["P2-4"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P3-2",
+      "phase": "Phase 3: 打磨",
+      "name": "README + 开源完善",
+      "description": "README + 方法论文档 + 自部署指引(BYO key) + License",
+      "dependencies": ["P1-8"],
+      "passes": false,
+      "assignee": "Claude"
+    },
+    {
+      "id": "P3-3",
+      "phase": "Phase 3: 打磨",
+      "name": "最终验收",
+      "description": "完整形态跑通整个赛期：实时+透明+可解释",
+      "dependencies": ["P3-1", "P3-2"],
+      "passes": false,
+      "assignee": "SYF"
+    }
+  ],
+  "degradation": {
+    "judge_p0": "回测校准曲线贴对角线？飘→调收缩参数；仍飘→接受~60%基准,不追最准(定位本就如此)",
+    "judge_p1": "托管赶不上？→砍透明度层先上核心(锦标赛概率+赛前预测)",
+    "judge_p2": "实时赶不上6/17峰值？→B退化成A,锦标赛骨架独立有价值(整个赛期每天都用)"
+  }
+}

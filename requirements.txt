@@ -1,0 +1,6 @@
+# Phase 0: 模型验证（回测）
+numpy>=1.26
+scipy>=1.11
+pandas>=2.1
+requests>=2.31
+matplotlib>=3.8      # Calibration plot
