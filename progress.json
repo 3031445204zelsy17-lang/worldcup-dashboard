@@ -33,8 +33,10 @@
       "name": "Elo rating 实现",
       "description": "Elo 评分算法 + 各队实力分计算（带时间衰减/K因子）",
       "dependencies": ["P0-2"],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-15",
+      "note": "World Football Elo 标准: K 因子 C 方案分级(60/50/40/30/20, 200 种赛事 0% 漏判) + 净胜球 G 倍数 + 期望胜率 We; H=海拔依赖主场优势(home_advantage_for, 阈值1500m / +50分每km)修正玻利维亚/厄瓜多尔高原水分(实测 Bolivia-31.5 / Ecuador-7.9), 世界杯中立场 H=0 得纯实力 Elo; 不加显式时间衰减(靠滚动更新, 衰减留 P0-4); ratings_at(df,as_of) 严格 < 时点防泄露供 P0-7 walk-forward. 22 unittest 过. 顺带: 48 队参赛 Elo 榜(worldcup_2026_groups.py/csv)+Top20 图, 前4=Spain/Argentina/France/England 与 FIFA 种子吻合, 死亡之组 D. 当前 Elo 存 elo_current.parquet(336 队). 关键决策见 memory: altitude-home-bias(高原修正) + project-focus-worldcup(聚焦48队)"
     },
     {
       "id": "P0-4",
