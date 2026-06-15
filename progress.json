@@ -2,7 +2,7 @@
   "project": "World Cup Probability Dashboard 2026",
   "deadline": "2026-07-19",
   "repo": "",
-  "last_updated": "2026-06-14",
+  "last_updated": "2026-06-15",
   "context": "产品设计阶段完成（见 docs/）。开源+公开网站；架构=托管/后台采集只读；节奏=A先行(托管锦标赛)→B实时增量。详见 docs/project-context.md 与 docs/architecture.md",
   "tasks": [
     {
@@ -22,8 +22,10 @@
       "name": "历史数据获取",
       "description": "2018/2022 WC 比赛结果（回测用）+ Elo 所需的国际赛历史（2022-2026）。先确定来源：API-Football 历史端点 vs 现成数据集(Kaggle)",
       "dependencies": ["P0-1"],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-15",
+      "note": "数据源=martj42/international_results(GitHub,49417场已完赛,336队);产出 international_history.parquet(全量训练源)+worldcup_2018_2022.parquet(128场回测集,各64);4年窗口4580场/8年8120场;训练集落全量历史供模型层切窗+walk-forward回测;顺手补pyarrow依赖+修pip SSL证书(~/.config/pip/pip.conf指向系统cert)"
     },
     {
       "id": "P0-3",
