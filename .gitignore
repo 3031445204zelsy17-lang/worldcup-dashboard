@@ -33,3 +33,7 @@ data/processed/*
 
 # 日志
 *.log
+
+# 临时验收/预览图（本地参考用，不进仓库）
+elo_top20_preview.png
+wc2026_elo_ranking.png
