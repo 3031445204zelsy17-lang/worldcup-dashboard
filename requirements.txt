@@ -4,3 +4,4 @@ scipy>=1.11
 pandas>=2.1
 requests>=2.31
 matplotlib>=3.8      # Calibration plot
+pyarrow>=15          # Parquet 读写（历史数据分层存储）
