@@ -60,10 +60,10 @@ P0-4 Dixon-Coles 单场比分模型
       θ_shrunk = (n_eff·θ_mle + κ·s)/(n_eff+κ). 收缩后重中心化 → 平均进球率不变(只去单队污染).
    ③ 收缩启用条件: fit(elo=...) 传 Elo 且 κ>0. Olympic=0 因 U-23 阵容对成年实力系统性误导
       (阵容 lineup 数据 P0 没有, 但赛事名已编码"非A队": Olympic/*Games/CONIFA). κ/档位调参留 P0-7.
-   ⚠️ 生产默认【不收缩】: 12 场前向验证收缩未见显著收益(含金量加权已独立达成方法论改进),
-      且 48 支 WC 队数据都充足(n_eff 15-25)、DC 无对阵项 → 收缩对 WC 产品近于 no-op(仅去污染
-      不参赛的 ConIFA 排名). 故生产 fit() 不传 elo(纯MLE); 收缩作为 safety-net 实现并测试,
-      传 elo 即开. P0-7 的 128 场回测做收缩开/关对照, 一锤定音是否默认启用.
+   ⚠️ P0-9 决策【生产开强收缩 κ=20】: P0-7 的 128 场回测证 A>C>B 单调(纯Elo>收缩>无收缩),
+      P0-8 κ 细扫定 sweet spot κ≈20-50(准确率52-53%距纯Elo仅~2pp, 保~15-28%攻防风格).
+      故生产 fit(df, elo=...) 默认 κ=20(DEFAULT_SHRINKAGE_KAPPA), 兼得 Elo 鲁棒性 + DC 富输出.
+      (P0-5 曾据 12 场前向(噪声)选"默认关", P0-7/P0-8 用 128 场证据推翻, P0-9 翻为开强收缩.)
 
 依赖: numpy / scipy / pandas  (CLAUDE.md 技术栈)
 运行自检: .venv/bin/python backend/models/dixon_coles.py
@@ -84,9 +84,10 @@ from scipy.special import gammaln
 # 常量 / 默认
 # ============================================================
 DEFAULT_HALF_LIFE_DAYS = 730.0   # 时间衰减半衰期(2 年); 国际队阵容变化快
-DEFAULT_SHRINKAGE_KAPPA = 5.0    # P0-5 Elo 先验收缩强度(先验等效比赛数). 5: n_eff=5→50%先验,
-                                 # n_eff=20 的强队仅 20%先验, n_eff≈0 的稀疏队纯走先验. 12 场前向
-                                 # 验证区分不了 κ(噪声), 精调(含准确率)留 P0-7 的 128 场回测.
+DEFAULT_SHRINKAGE_KAPPA = 20.0   # P0-9 决策: 生产开强收缩 κ=20(P0-8 sweep sweet spot).
+                                 # 128 场回测: κ=20 准确率52.3%/Brier0.6076, 距纯Elo(~54.7%)仅~2pp,
+                                 # 却保留~28%攻防风格(比分分布/方法论叙事所需). n_eff=20强队→50%先验,
+                                 # n_eff≈0 稀疏队(ConIFA)纯走先验去污染. 详见 P0-8 backtest_kappa_sweep.
 MAX_GOALS = 10                   # 预测比分网格上界 0..10
 LN2 = np.log(2.0)
 
@@ -268,10 +269,9 @@ class DixonColes:
         host_bonus:            东道主额外加成(固定值, 默认 0=不加成). 经前向验证证伪不再拟合
                                (详见模块 docstring 设计说明第 2 条). 传非 0 可做敏感性试验.
         use_importance_weight: P0-5 含金量加权(默认开). 关掉则所有赛事 imp=1(退回纯 P0-4, 供消融对比).
-        shrinkage_kappa:       P0-5 Elo 先验收缩强度(先验的"等效比赛数"伪计数). 默认 5:
-                               n_eff=5 的队收缩 50%, n_eff=20 的强队仅 20%, n_eff≈0 的稀疏队纯走先验.
-                               12 场前向验证区分不了 κ(噪声), 精调留 P0-7 的 128 场回测.
-                               传 elo=None 或 kappa=0 即不收缩(纯 MLE).
+        shrinkage_kappa:       P0-5 Elo 先验收缩强度(先验"等效比赛数"伪计数). 默认 20(P0-9 决策,
+                               P0-8 sweep sweet spot): n_eff=20 强队→50%先验, n_eff≈0 稀疏队纯走先验.
+                               传 elo=None 或 kappa=0 即不收缩(纯 MLE, 消融/对照用).
         """
         self.half_life_days = half_life_days
         self.host_bonus = host_bonus
@@ -582,10 +582,11 @@ if __name__ == "__main__":
 
     df = pd.read_parquet(HIST)
 
-    # 生产模型 = 含金量加权 + 纯 MLE(不收缩). 收缩(Elo先验)经 12 场前向验证未见显著收益,
-    # 且 48 支 WC 队数据都充足(n_eff 15-25)、DC 无对阵项 → 收缩对 WC 产品近于 no-op,
-    # 故默认不注入生产; 作为 safety-net 已实现+测试, 待 P0-7 的 128 场对照定夺(见设计说明第 7 条).
-    model = DixonColes().fit(df)   # 含金量加权(默认开) + 纯 MLE
+    # 生产模型 = 含金量加权 + Elo 先验强收缩 κ=20 (P0-9 决策, 见设计说明第 7 条).
+    # P0-7 128 场证 A>C>B 单调, P0-8 sweep 定 sweet spot κ≈20-50. κ=20 兼 Elo 鲁棒 + DC 富输出.
+    from elo import EloModel  # noqa: E402
+    elo = EloModel().fit(df).ratings()
+    model = DixonColes().fit(df, elo=elo)   # 含金量加权(默认开) + κ=20 强收缩(默认)
 
     frame = model.to_frame()
     OUT_PARQUET.parent.mkdir(parents=True, exist_ok=True)
@@ -595,8 +596,8 @@ if __name__ == "__main__":
         json.dump(gp, f, indent=2)
 
     print("=" * 64)
-    print(f"P0-5 Dixon-Coles 生产模型 | {len(df)} 场 → {len(frame)} 队 "
-          f"(含金量加权 + 纯 MLE, 收缩默认关)")
+    print(f"Dixon-Coles 生产模型 | {len(df)} 场 → {len(frame)} 队 "
+          f"(含金量加权 + Elo 先验强收缩 κ={gp['shrinkage_kappa']:.0f}, P0-9 决策)")
     print(f"全局参数: μ={gp['mu']:.3f}  γ={gp['gamma']:.3f}  "
           f"γ_host={gp['gamma_host']:.3f}  ρ={gp['rho']:.3f}  "
           f"(half_life={gp['half_life_days']:.0f}d)")
@@ -605,9 +606,9 @@ if __name__ == "__main__":
           f"低分修正 ρ{'<' if gp['rho']<0 else '>'}0 "
           f"({'符合预期' if gp['rho'] < 0 else '⚠️ 与典型相反, 回测留意'})")
     print(f"  含金量: 友谊赛/邀请杯=0.25, Olympic U-23/*Games/CONIFA 已剔除(w=0) | "
-          f"收缩 safety-net: 关(传 elo 可开, κ={gp['shrinkage_kappa']:.0f})")
+          f"收缩: 开 κ={gp['shrinkage_kappa']:.0f} β={gp['shrink_beta']:.4f}")
     print("=" * 64)
-    # 主流国家队(对齐"聚焦参赛 48 队"); n_eff = 数据充足度(越大参数越稳)
+    # 主流国家队(对齐"聚焦参赛 48 队"); n_eff = 数据充足度(越大越少被收缩拉向先验)
     showcase = ["Spain", "Argentina", "France", "England", "Brazil", "Germany",
                 "Netherlands", "Portugal", "Belgium", "Italy",
                 "United States", "Canada", "Mexico"]
@@ -618,19 +619,10 @@ if __name__ == "__main__":
     print("主流国家队 attack/defense (net=attack/defense, n_eff=有效样本量):")
     print(sc.to_string(index=False, float_format=lambda x: f"{x:.3f}"))
     print("-" * 64)
-    # —— P0-5 收缩 safety-net 诊断(证明可用, 非生产默认): 拟合含 Elo 先验版, 看 ConIFA 小队被去污染 ——
-    from elo import EloModel  # noqa: E402
-    elo = EloModel().fit(df).ratings()
-    model_shr = DixonColes().fit(df, elo=elo)   # 同数据 + Elo 先验收缩(κ=5)
-    shr_frame = model_shr.to_frame()
-    print(f"收缩 safety-net 诊断(开 κ={model_shr.shrinkage_kappa:.0f}, β={model_shr.shrink_beta:.4f}): "
-          f"n_eff 最低 8 队收缩前后 net_strength 对比")
-    diag = shr_frame.nsmallest(8, "n_eff")[["team", "n_eff"]].copy()
-    diag["net_收缩前(MLE)"] = diag["team"].map({t: frame.loc[frame.team == t, "net_strength"].iloc[0]
-                                                  for t in diag["team"]})
-    diag["net_收缩后"] = shr_frame.nsmallest(8, "n_eff")["net_strength"].values
-    print(diag.to_string(index=False, float_format=lambda x: f"{x:.3f}"))
-    print("  → 小样本/业余队(ConIFA)被拉向 Elo 先验 net≈1.0, 不再离谱极值污染(此为 safety-net, 生产默认关)")
+    # 收缩去污染验证: n_eff 最低 8 队(ConIFA/业余)被拉向 Elo 先验 net≈1.0, 不再离谱极值
+    low = frame.nsmallest(8, "n_eff")[["team", "attack", "defense", "net_strength", "n_eff"]]
+    print("n_eff 最低 8 队(已被 κ=20 收缩拉向 Elo 先验, 去污染):")
+    print(low.to_string(index=False, float_format=lambda x: f"{x:.3f}"))
     print("-" * 64)
 
     # 2026 三东道主: 纯中立 vs 本国主场(享普通 γ; γ_host 已砍见设计说明第 2 条), 对手 Switzerland

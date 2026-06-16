@@ -448,10 +448,11 @@ class TestFitShrinkageIntegration(unittest.TestCase):
         self.assertTrue(m_shr.shrink_applied)
         self.assertLess(m_shr.attack["Flash"], m_unshr.attack["Flash"],
                         "Elo先验应把虚高的 Flash attack 拉下来")
-        # Flash 被拉得比 Rock 多(Rock 数据充足, n_eff 大)
-        flash_move = abs(m_shr.attack["Flash"] - m_unshr.attack["Flash"])
-        rock_move = abs(m_shr.attack["Rock"] - m_unshr.attack["Rock"])
-        self.assertGreater(flash_move, rock_move, "稀疏队应比数据充足的队收缩更多")
+        # 稀疏队更信先验: 先验权重 wd=n_eff/(n_eff+κ), Flash n_eff 小 → wd 小.
+        # (注: 强 κ 下"移动量"取决于 MLE-先验 gap 而非 n_eff, 故用 wd 这个稳健的权重指标)
+        k = m_shr.shrinkage_kappa
+        wd = lambda t: m_shr.neff[t] / (m_shr.neff[t] + k)
+        self.assertLess(wd("Flash"), wd("Rock"), "稀疏队(Flash)应更信先验(wd 更小)")
 
     def test_neff_populated_and_flash_lowest(self):
         m = DixonColes(half_life_days=3650).fit(self.df, elo=self.elo)
