@@ -23,6 +23,8 @@ import pandas as pd
 
 from dixon_coles import (  # noqa: E402
     DixonColes,
+    importance_weight,
+    _elo_prior_shrink,
     tau_correction,
     time_decay_weights,
 )
@@ -242,7 +244,7 @@ class TestFitConvergence(unittest.TestCase):
         m = DixonColes(half_life_days=3650).fit(self.df)
         frame = m.to_frame()
         self.assertEqual(list(frame.columns),
-                         ["team", "attack", "defense", "net_strength"])
+                         ["team", "attack", "defense", "net_strength", "n_eff"])
         self.assertEqual(len(frame), 4)
 
 
@@ -264,12 +266,198 @@ class TestFitAtLeakage(unittest.TestCase):
                            "fit_at 应排除 ≥ cutoff 的比赛; A 的早期强势应只反映在早快照里")
 
     def test_cutoff_on_match_day_excludes_it(self):
-        # cutoff 恰为某场当天: 严格 < 不含当天 → 用更少比赛
-        # 2021-07-01 是 B/C/D 互踢日; cutoff 在此应排掉它们, 只剩 2020 全部 + 2021 A 的场次
-        m_before = DixonColes(half_life_days=3650).fit_at(self.df, "2021-06-30")
-        m_on = DixonColes(half_life_days=3650).fit_at(self.df, "2021-07-01")
-        # 两者用的比赛集合不同 → 参数应不同(至少 A 之外某队)
-        self.assertNotAlmostEqual(m_before.attack["A"], m_on.attack["A"], places=6)
+        # 严格 < cutoff: cutoff 当天的比赛被排除. 用一个"只在 cutoff 当天出场"的队灵敏检测——
+        # 它在 fit_at(cutoff) 里不出现(被排除), 在 fit_at(cutoff+1天) 里出现(被纳入).
+        rows = [
+            {"date": "2021-06-01", "home_team": "A", "away_team": "B", "home_score": 2, "away_score": 1,
+             "tournament": "Friendly", "city": "X", "country": "A", "neutral": False, "year": 2021},
+            {"date": "2021-06-01", "home_team": "B", "away_team": "A", "home_score": 1, "away_score": 1,
+             "tournament": "Friendly", "city": "X", "country": "B", "neutral": False, "year": 2021},
+            {"date": "2021-07-01", "home_team": "C", "away_team": "A", "home_score": 0, "away_score": 3,
+             "tournament": "Friendly", "city": "X", "country": "C", "neutral": False, "year": 2021},
+        ]
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"])
+        m_excl = DixonColes(half_life_days=3650).fit_at(df, "2021-07-01")   # 严格<7/01 → 排除 C 的当天场
+        m_incl = DixonColes(half_life_days=3650).fit_at(df, "2021-07-02")   # 含 C 的当天场
+        self.assertNotIn("C", m_excl.attack, "cutoff 当天的比赛应被严格排除 → C 不出现在拟合里")
+        self.assertIn("C", m_incl.attack, "cutoff+1天 → C 的当天比赛被纳入")
+        self.assertEqual(set(m_excl.teams), {"A", "B"})
+        self.assertEqual(set(m_incl.teams), {"A", "B", "C"})
+
+
+# ============================================================
+# P0-5: 含金量分档 importance_weight
+# ============================================================
+class TestImportanceWeight(unittest.TestCase):
+    """赛事类型 → 含金量权重 w 的分档正确性."""
+
+    def test_tier_values(self):
+        # 六档核心取值
+        self.assertEqual(importance_weight("FIFA World Cup"), 1.00)
+        self.assertAlmostEqual(importance_weight("UEFA Euro"), 0.90)
+        self.assertAlmostEqual(importance_weight("Copa América"), 0.90)
+        self.assertAlmostEqual(importance_weight("Gold Cup"), 0.90)
+        # 预选赛(关键词, 大小写不敏感)
+        self.assertAlmostEqual(importance_weight("FIFA World Cup qualification"), 0.75)
+        self.assertAlmostEqual(importance_weight("AFC Asian Cup Qualification"), 0.75)
+        # 次级正式(国家联赛 + 主要区域杯)
+        self.assertAlmostEqual(importance_weight("UEFA Nations League"), 0.50)
+        self.assertAlmostEqual(importance_weight("Gulf Cup"), 0.50)
+        self.assertAlmostEqual(importance_weight("CECAFA Cup"), 0.50)
+
+    def test_friendly_and_default_invitational(self):
+        # 友谊赛 0.25; 兜底有名邀请杯(King's Cup/Kirin…)也 0.25
+        self.assertAlmostEqual(importance_weight("Friendly"), 0.25)
+        self.assertAlmostEqual(importance_weight("FIFA Series"), 0.25)
+        self.assertAlmostEqual(importance_weight("King's Cup"), 0.25)
+        self.assertAlmostEqual(importance_weight("Kirin Challenge Cup"), 0.25)
+        self.assertAlmostEqual(importance_weight("Some Obscure Invitation Trophy"), 0.25)
+
+    def test_olympic_and_games_excluded(self):
+        # Olympic U-23 / 综合运动会 → 剔除(0): 阵容系统性非成年A队
+        self.assertEqual(importance_weight("Olympic Games"), 0.00)
+        self.assertEqual(importance_weight("Asian Games"), 0.00)
+        self.assertEqual(importance_weight("Southeast Asian Games"), 0.00)
+        self.assertEqual(importance_weight("Pacific Games"), 0.00)
+
+    def test_amateur_nonfifa_excluded(self):
+        # 非FIFA业余队(CONIFA/Viva/Island Games) → 剔除; 且先于预选赛判定
+        self.assertEqual(importance_weight("CONIFA World Football Cup"), 0.00)
+        self.assertEqual(importance_weight("CONIFA World Football Cup qualification"), 0.00)  # 防被当预选赛
+        self.assertEqual(importance_weight("Viva World Cup"), 0.00)
+        self.assertEqual(importance_weight("Island Games"), 0.00)
+        self.assertEqual(importance_weight("Muratti Vase"), 0.00)
+
+    def test_weight_in_unit_interval(self):
+        for t in ["FIFA World Cup", "Friendly", "Olympic Games", "CONIFA Cup",
+                  "UEFA Euro qualification", "Nonsense"]:
+            w = importance_weight(t)
+            self.assertGreaterEqual(w, 0.0)
+            self.assertLessEqual(w, 1.0)
+
+
+# ============================================================
+# P0-5: Elo 先验收缩 _elo_prior_shrink (纯函数, 确定性强)
+# ============================================================
+class TestEloPriorShrink(unittest.TestCase):
+    """post-hoc 收缩: 稀疏队拉向先验, 数据充足队不动, 全局校准保持."""
+
+    def _three_team_setup(self):
+        # 3 队: Flash(踢1场), Rock(踢10场), Bag(全踢). ih/ia/match_w 手设.
+        teams = ["Flash", "Rock", "Bag"]
+        idx = {"Flash": 0, "Rock": 1, "Bag": 2}
+        # Flash vs Bag ×1; Rock vs Bag ×10
+        ih = np.array([idx["Flash"]] + [idx["Rock"]] * 10)
+        ia = np.array([idx["Bag"]] + [idx["Bag"]] * 10)
+        match_w = np.ones(11)
+        return teams, ih, ia, match_w
+
+    def test_sparse_shrunk_more_than_dense(self):
+        # Elo 全相等 → 先验 s=0(均值). Flash(离谱高 att, n_eff=1) 应被拉向 0 远比 Rock(n_eff=10) 狠.
+        teams, ih, ia, match_w = self._three_team_setup()
+        att_log = np.array([2.0, 1.5, 0.0])   # Flash/Rock 都偏高, Bag 均值
+        def_log = np.array([0.0, 0.0, 0.0])
+        elo = {"Flash": 1500.0, "Rock": 1500.0, "Bag": 1500.0}  # 等Elo → s=0
+        att_shr, _, beta, neff = _elo_prior_shrink(teams, ih, ia, match_w, att_log, def_log, elo, kappa=5.0)
+        # n_eff: Flash=1, Rock=10
+        self.assertAlmostEqual(neff[0], 1.0)
+        self.assertAlmostEqual(neff[1], 10.0)
+        # 等Elo → beta≈0 → s=0 → att_shr = wd·att_log; Flash wd 小 → 拉向 0 更多
+        self.assertLess(abs(att_shr[0] - 0.0), abs(att_log[0] - 0.0))   # Flash 向 0 靠
+        self.assertGreater(abs(att_shr[0] - att_log[0]), abs(att_shr[1] - att_log[1]))  # Flash 移动更多
+        self.assertAlmostEqual(beta, 0.0, places=6)
+
+    def test_elo_scales_prior(self):
+        # att 与 Elo 正相关 → 回归斜率 β>0, 先验 s 随 Elo 单调
+        teams, ih, ia, match_w = self._three_team_setup()
+        att_log = np.array([0.2, 1.5, 0.0])    # Rock(高Elo)att 高, Flash(低Elo)att 低
+        def_log = np.array([0.0, 0.0, 0.0])
+        elo = {"Flash": 1400.0, "Rock": 1900.0, "Bag": 1500.0}
+        _, _, beta, _ = _elo_prior_shrink(teams, ih, ia, match_w, att_log, def_log, elo, kappa=5.0)
+        self.assertGreater(beta, 0.0, "att 与 Elo 正相关时 β 应>0")
+        e = np.array([1400.0, 1900.0, 1500.0]) - 1600.0
+        s = beta * e
+        self.assertGreater(s[1], s[2])   # Rock(高Elo) 先验 > Bag
+        self.assertGreater(s[2], s[0])   # Bag 先验 > Flash(低Elo)
+
+    def test_global_calibration_preserved(self):
+        # 收缩后 attack 均值=0(归一), defense 均值=原 def_mean → 平均进球率不变
+        teams, ih, ia, match_w = self._three_team_setup()
+        att_log = np.array([1.5, 0.8, -0.3])
+        def_log = np.array([0.4, -0.2, 0.1])
+        elo = {"Flash": 1400.0, "Rock": 1900.0, "Bag": 1500.0}
+        att_shr, def_shr, _, _ = _elo_prior_shrink(teams, ih, ia, match_w, att_log, def_log, elo, kappa=5.0)
+        self.assertAlmostEqual(att_shr.mean(), 0.0, places=10)
+        self.assertAlmostEqual(def_shr.mean(), def_log.mean(), places=10)
+
+    def test_zero_neff_is_pure_prior(self):
+        # n_eff=0(完全不出现的队) → wd=0 → 完全等于先验 s, MLE 离谱值被丢弃
+        teams = ["Ghost", "Real", "Other"]
+        ih = np.array([1, 1]); ia = np.array([2, 2])  # 只 Real vs Other; Ghost(0) 不参与 → n_eff=0
+        match_w = np.array([1.0, 1.0])
+        att_log = np.array([9.0, 0.0, 0.0])   # Ghost 的 MLE 离谱(纯函数测, 不经优化器)
+        def_log = np.array([0.0, 0.0, 0.0])
+        elo = {"Ghost": 1500.0, "Real": 1500.0, "Other": 1500.0}  # 等Elo → s=0
+        att_shr, _, beta, neff = _elo_prior_shrink(teams, ih, ia, match_w, att_log, def_log, elo, kappa=5.0)
+        self.assertAlmostEqual(neff[0], 0.0)
+        self.assertAlmostEqual(beta, 0.0, places=6)   # 等Elo → β=0
+        self.assertAlmostEqual(att_shr[0], 0.0, places=10)  # wd=0 → att_shr=s=0(先验), MLE 的 9 被完全丢弃
+
+
+# ============================================================
+# P0-5: fit() 收缩集成 —— 端到端验证稀疏队被拉向 Elo 先验
+# ============================================================
+def _make_flash_league() -> pd.DataFrame:
+    """Flash: 低Elo, 只踢2场且都5-0大胜(运气) → 无收缩时 attack 虚高.
+    Rock: 高Elo, 踢25场稳健 → 数据充足. Bag: 被虐背景板."""
+    rows = []
+    for _ in range(2):   # Flash vs Bag ×2, Flash 5-0
+        rows.append({"date": "2024-06-01", "home_team": "Flash", "away_team": "Bag",
+                     "home_score": 5, "away_score": 0, "tournament": "Friendly",
+                     "city": "F", "country": "Flash", "neutral": False, "year": 2024})
+    for _ in range(25):  # Rock vs Bag ×25, Rock 2-1
+        rows.append({"date": "2024-06-01", "home_team": "Rock", "away_team": "Bag",
+                     "home_score": 2, "away_score": 1, "tournament": "Friendly",
+                     "city": "R", "country": "Rock", "neutral": False, "year": 2024})
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+class TestFitShrinkageIntegration(unittest.TestCase):
+    """fit(elo=...) 端到端: 稀疏低Elo队的虚高参数被 Elo 先验拉回."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.df = _make_flash_league()
+        # 手设 Elo: Flash 低(1400), Rock 高(1900), Bag 中(1500)
+        cls.elo = {"Flash": 1400.0, "Rock": 1900.0, "Bag": 1500.0}
+
+    def test_flash_inflated_without_shrink(self):
+        # 无收缩: Flash 两场5-0 → attack 虚高(高于 Rock)
+        m = DixonColes(half_life_days=3650).fit(self.df)   # 不传 elo → 纯MLE
+        self.assertGreater(m.attack["Flash"], m.attack["Rock"],
+                           "无收缩时 Flash 的2场运气大胜应虚高 attack")
+        self.assertEqual(m.shrink_applied, False)
+
+    def test_shrink_pulls_flash_down(self):
+        # 有收缩: Flash(低Elo, n_eff≈0.5)被拉向低先验 → attack 显著低于无收缩
+        m_unshr = DixonColes(half_life_days=3650).fit(self.df)
+        m_shr = DixonColes(half_life_days=3650).fit(self.df, elo=self.elo)
+        self.assertTrue(m_shr.shrink_applied)
+        self.assertLess(m_shr.attack["Flash"], m_unshr.attack["Flash"],
+                        "Elo先验应把虚高的 Flash attack 拉下来")
+        # Flash 被拉得比 Rock 多(Rock 数据充足, n_eff 大)
+        flash_move = abs(m_shr.attack["Flash"] - m_unshr.attack["Flash"])
+        rock_move = abs(m_shr.attack["Rock"] - m_unshr.attack["Rock"])
+        self.assertGreater(flash_move, rock_move, "稀疏队应比数据充足的队收缩更多")
+
+    def test_neff_populated_and_flash_lowest(self):
+        m = DixonColes(half_life_days=3650).fit(self.df, elo=self.elo)
+        # Flash 踢2场(imp0.25) → n_eff≈0.5; Bag 踢27场 → n_eff 最大
+        self.assertLess(m.neff["Flash"], m.neff["Bag"])
+        self.assertLess(m.neff["Flash"], m.neff["Rock"])
 
 
 if __name__ == "__main__":
