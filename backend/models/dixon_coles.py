@@ -201,6 +201,10 @@ def _elo_prior_shrink(
     np.add.at(neff, ih, match_w)
     np.add.at(neff, ia, match_w)
 
+    # κ≤0 = 无收缩 → 直接返回 MLE(归一). 跳过后续, 也避免 neff=0 队的 0/0 NaN 污染.
+    if kappa <= 0:
+        return att_log - att_log.mean(), def_log, 0.0, neff
+
     elo_arr = np.array([elo.get(t, 1500.0) for t in teams], dtype=float)
     e = elo_arr - elo_arr.mean()                       # Elo 偏离(全队均值中心化)
     def_mean = float(def_log.mean())                   # defense 全局基线(与 μ 非识别, 收缩后须保)
@@ -287,6 +291,7 @@ class DixonColes:
         self.shrink_beta: float | None = None # Elo→log强度回归斜率(收缩启用时)
         self.shrink_applied: bool = False
         self._fitted = False
+        self._P: dict | None = None           # 最近一次 _prepare 的数组(ih/ia/w…), 供 shrunk_variant 复用
 
     # ---------- 内部: 把 DataFrame 折成 numpy 数组 ----------
     def _prepare(self, df: pd.DataFrame, as_of: DateLike | None):
@@ -367,6 +372,7 @@ class DixonColes:
         P = self._prepare(df, as_of)
         n = P["n"]
         self.teams = P["teams"]
+        self._P = P   # 供 shrunk_variant 复用 ih/ia/w(同一 MLE 派生多 κ, P0-7)
 
         # 有效样本量 n_eff(team) = Σ_{该队的场} w_eff —— 始终计算(收缩强度指标, 也供 to_frame)
         neff = np.zeros(n)
@@ -455,6 +461,30 @@ class DixonColes:
         m.shrink_beta = gp.get("shrink_beta")
         m.shrink_applied = gp.get("shrink_applied", False)
         m._fitted = True
+        return m
+
+    def shrunk_variant(self, elo: dict, kappa: float) -> "DixonColes":
+        """从本 MLE 模型 post-hoc 派生一个收缩变体(不重拟合).  (P0-7 多 κ 对照用)
+
+        复用本模型的 MLE att/def + _P(ih/ia/w), 调 _elo_prior_shrink 施 κ → 新模型.
+        一场只需拟合一次 MLE, 即可派生 κ=0(=本模型)/κ=5(收缩)/κ→∞(纯Elo) 三变体.
+        返回: 新 DixonColes(全局 μ/γ/ρ 不变, attack/defense 按 κ 收缩), _fitted=True.
+        """
+        if not self._fitted or self._P is None:
+            raise RuntimeError("先 fit()(且 _P 在内存) 再 shrunk_variant().")
+        att_log = np.log(np.array([self.attack[t] for t in self.teams]))
+        att_log = att_log - att_log.mean()                    # 归一(应已≈0, 兜底)
+        def_log = np.log(np.array([self.defense[t] for t in self.teams]))
+        att_shr, def_shr, beta, _ = _elo_prior_shrink(
+            self.teams, self._P["ih"], self._P["ia"], self._P["w"],
+            att_log, def_log, elo, float(kappa))
+        m = DixonColes(half_life_days=self.half_life_days, host_bonus=self.gamma_host,
+                       use_importance_weight=self.use_importance_weight, shrinkage_kappa=kappa)
+        m.mu, m.gamma, m.gamma_host, m.rho = self.mu, self.gamma, self.gamma_host, self.rho
+        m.attack = {t: float(np.exp(a)) for t, a in zip(self.teams, att_shr)}
+        m.defense = {t: float(np.exp(d)) for t, d in zip(self.teams, def_shr)}
+        m.teams, m.neff = list(self.teams), dict(self.neff)
+        m.shrink_beta, m.shrink_applied, m._fitted = beta, True, True
         return m
 
     def predict(self, home: str, away: str,
