@@ -89,8 +89,10 @@
       "dependencies": [
         "P0-6"
       ],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-16",
+      "note": "2018+2022 WC 128 场逐场赛前 walk-forward 预测 vs 实际. 方法: 严格 date<该场防泄露(Elo walk_forward 赛前快照经 EloModel.ratings_at 逐位验证一致); DC 用 10 年窗口拟合(实测预测与全量差仅 0.01pp, 7s/fit vs 全量 35s); 收缩 post-hoc → 一场 1 次 MLE 经 shrunk_variant 派生 3 变体(κ=0 生产B / κ=5 收缩C / κ=1e4 纯Elo基准A), 不重复拟合, 总 898s.\n两个关键发现:\n①【收缩有效】A>C>B 双指标单调: 准确率 54.7%>49.2%>46.9%, Brier 0.5992<0.6185<0.6304. 收缩(C)明显优于无收缩生产(B): +2.3pp 准确率, -0.012 Brier. → 推翻 P0-5「选项2 收缩默认关」决策, 128 场证据支持开收缩甚至加大κ. (注: κ=1e4 时 net→1 单强度先验抹平攻防风格, A 的好成绩来自 Elo 鲁棒性+全局校准, 非攻防信息.)\n②【纯Elo 国际赛场胜过 DC】sobering 但符合预期: 国际队每年仅~10场(俱乐部~50), per-team 攻防参数高方差过拟合; Elo 低方差更鲁棒. DC 价值不在准确率, 而在富输出(比分分布/攻防叙事/Monte Carlo 锦标赛模拟所需), Elo 给标量给不了. 项目应如实定位 DC=富输出层, 准确率天花板~50-55%(非原设60%).\n平局系统性低估仍在: 实际 21.9%(28/128), DC 预测平局仅 6.2%(纯Elo 0% 因单强度抹平). → P0-8 校准重点.\n产出: data/processed/backtest_2018_2022.parquet(128行31列: 3变体三概率+命中+Brier+Elo+neutral/host), backtest.py --summary 可复看不重拟合. 8 backtest 单测(walk_forward==ratings_at 防泄露/同日不互用/后场反映前场/shrunk_variant κ=0同MLE·大κ收敛net→1·κ=0无NaN回归/集成) + 74 回归全过.\n影响下游: P0-8 应(a)细扫κ(5~1e4 找 sweet spot: 保留部分攻防风格+获 Elo 鲁棒)(b)修平局低估(调ρ或加平局修正)(c)画校准曲线; P0-9 据~50-55%真实天花板重审 Phase1 go/no-go + 收缩默认. 准确率 46.9%~54.7% 全在足球预测正常区间, 撑得起「透明+可解释」定位(本就不追最准)."
     },
     {
       "id": "P0-8",
