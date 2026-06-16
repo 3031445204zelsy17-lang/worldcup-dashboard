@@ -21,7 +21,9 @@
       "phase": "Phase 0: 模型验证",
       "name": "历史数据获取",
       "description": "2018/2022 WC 比赛结果（回测用）+ Elo 所需的国际赛历史（2022-2026）。先确定来源：API-Football 历史端点 vs 现成数据集(Kaggle)",
-      "dependencies": ["P0-1"],
+      "dependencies": [
+        "P0-1"
+      ],
       "passes": true,
       "assignee": "Claude",
       "completed_at": "2026-06-15",
@@ -32,7 +34,9 @@
       "phase": "Phase 0: 模型验证",
       "name": "Elo rating 实现",
       "description": "Elo 评分算法 + 各队实力分计算（带时间衰减/K因子）",
-      "dependencies": ["P0-2"],
+      "dependencies": [
+        "P0-2"
+      ],
       "passes": true,
       "assignee": "Claude",
       "completed_at": "2026-06-15",
@@ -43,7 +47,9 @@
       "phase": "Phase 0: 模型验证",
       "name": "Dixon-Coles 实现",
       "description": "攻防参数估计 + 低分偏差修正(ρ) + 时间衰减函数",
-      "dependencies": ["P0-3"],
+      "dependencies": [
+        "P0-3"
+      ],
       "passes": true,
       "assignee": "Claude",
       "completed_at": "2026-06-16",
@@ -54,16 +60,22 @@
       "phase": "Phase 0: 模型验证",
       "name": "冷门对阵收缩",
       "description": "用 Elo 先验做 Dixon-Coles 攻防参数 shrinkage，防止跨洲稀疏对阵出离谱预测",
-      "dependencies": ["P0-4"],
-      "passes": false,
-      "assignee": "Claude"
+      "dependencies": [
+        "P0-4"
+      ],
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-16",
+      "note": "两机制治P0-4三个已知病(ConIFA小队污染/Canada主场友谊赛水分/跨洲稀疏对阵离谱). ①赛事含金量权重 importance_weight(tournament) 6档: WC1.0/洲际大赛正赛0.9/预选赛0.75/次级正式0.5(国家联赛+主要区域联邦杯:UEFA·CONCACAF Nations League/Gulf/AFF/EAFF/CECAFA/COSAFA/Arab…)/友谊赛+邀请杯0.25/业余非成年剔除0(Olympic Games=U-23/*Games综合运动会/CONIFA/Viva/Island Games/Muratti). 阵容lineup数据P0没有, 但赛事名本身编码'非A队'信号(Olympic=U-23/*Games/CONIFA), 光类型降权就抓到大半'阵容非主力', 真 lineup 钩子留P1. Olympic经讨论确认无用→w=0剔除. ②Elo先验post-hoc收缩 _elo_prior_shrink: n_eff(team)=Σ_{该队场}w·φ(含金量×近期); 先验s=β·(Elo−mean)(att/def共用单强度因子, β由unshrunk MLE的(att+def_c)/2对Elo过原点回归得); θ_shr=(n_eff·θ_mle+κ·s)/(n_eff+κ); 收缩后重中心化(att归0/defense保def_mean)→平均进球率严格不变, 只去单队污染. w喂两处: 似然逐场权重(×φ) + n_eff. 含金量加权默认开; 收缩需fit(elo=...)且κ>0, 无elo则纯MLE(向后兼容). κ默认5.\n⚠️生产默认不收缩(用户验收决策=选项2): 生产 fit() 不传 elo → 含金量加权+纯MLE. 理由: ①12场前向收缩未见显著收益(含金量加权已独立达成方法论改进); ②48支WC队数据都充足(n_eff 15-25)且DC无对阵项→收缩对WC产品近于no-op, 仅去污染不参赛的ConIFA排名; ③收缩对强队参数有~10%拉力(Spain纯MLE net 0.845 vs 收缩0.957), 注入有断言性的Elo先验前应等P0-7证据. 收缩代码+单测全保留作safety-net, 传elo即开.\n全量拟合生产模型(49417场/336队, 含金量加权+纯MLE不收缩): μ=0.363 γ=0.255 ρ=-0.043(γ较P0-4 0.211↑, 友谊赛降权后主场优势从正赛估, 方向对). 收缩safety-net单独验证(κ=5, β=0.0016): n_eff≈0的ConIFA小队(Saare County/Kiribati/Two Sicilies/Arameans/Chameria…)net从~1.36(零数据小样本虚高)塌到~1.02(回归Elo先验), 去污染有效(核心spec达成).\n2026前向验证3路消融(12场赛前快照, forward_validate_2026.py): A.P0-4基线58.3%(7/12)Brier0.6125 | B.+含金量58.3%(7/12)Brier0.6212 | C.+收缩(κ=5)50.0%(6/12)Brier0.6244. 关键结论: ①含金量加权准确率不变(仅γ↑→Brier微升), 是收缩单独把Brazil-Morocco边界场从'平'翻成'巴西胜'(H/D knife-edge, 1场噪声); ②κ扫2~10全50%、κ=20回58%——非单调, 12场区分不了κ(噪声量级), 精调留P0-7的128场回测; ③故选κ=5作收缩档位(若启用): Brier最优+去污染完整+强队扰动可控(n_eff≈20的Spain仅20%先验); 但生产默认不启用(见上决策); ④Canada过度自信(83%预测胜/实平)三路都没修——结构性爆冷(主场东道主γ+实力合理占优), 含金量加权抬γ反而让它略更自信, 这不是收缩能治的, 推P0-7校准.\n诚实结论: P0-5交付了spec(稀疏对阵去污染safety-net, 防离谱预测)——minnow去污染稳稳达成(收缩safety-net诊断验证); 含金量加权方法论更干净(友谊赛/Olympic U-23不再污染), 已默认启用进生产(=变体B, 前向58%); 收缩作为safety-net实现+测试但生产默认关(选项2), 待P0-7的128场回测做开/关对照一锤定音. Canada结构性问题(主场东道主过度自信)推P0-7校准. 33 DC单测(importance_weight各档/Olympic&CONIFA剔除/收缩纯函数:稀疏队拉先验·强队不动·n_eff=0纯先验·全局校准保持 + fit端到端虚高Flash被拉回) + 22 elo回归全过. 顺手修pre-existing脆弱测试 test_cutoff_on_match_day(原断言两相同拟合'不同'靠浮点噪声过→改成用'只在cutoff当天出场的队'确定性检测严格<排除). 产出更新: dixon_coles_current.parquet(+n_eff列) + dixon_coles_global.json(+importance/shrinkage元信息). 关键决策见 memory: dataset-field-semantics(东道主本国场neutral=False) + altitude-home-bias."
     },
     {
       "id": "P0-6",
       "phase": "Phase 0: 模型验证",
       "name": "单场预测管线",
       "description": "输入两队 → 输出胜/平/负概率 + 比分分布（Poisson 输出）",
-      "dependencies": ["P0-5"],
+      "dependencies": [
+        "P0-5"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -72,7 +84,9 @@
       "phase": "Phase 0: 模型验证",
       "name": "回测脚本",
       "description": "对 2018/2022 WC 每场比赛跑赛前预测 vs 实际结果",
-      "dependencies": ["P0-6"],
+      "dependencies": [
+        "P0-6"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -81,7 +95,9 @@
       "phase": "Phase 0: 模型验证",
       "name": "评估指标",
       "description": "Brier Score + Calibration Plot + 对标纯 Elo 基准 + 博彩赔率反推（如可得）",
-      "dependencies": ["P0-7"],
+      "dependencies": [
+        "P0-7"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -90,7 +106,9 @@
       "phase": "Phase 0: 模型验证",
       "name": "回测结论与决策",
       "description": "校准曲线是否贴对角线？准确率多少？撑不撑得起？是否进 Phase 1",
-      "dependencies": ["P0-8"],
+      "dependencies": [
+        "P0-8"
+      ],
       "passes": false,
       "assignee": "SYF"
     },
@@ -99,7 +117,9 @@
       "phase": "Phase 1: 托管锦标赛(A)",
       "name": "实时数据采集层",
       "description": "API-Football + football-data.org 双源 + 交叉验证 + 三层缓存",
-      "dependencies": ["P0-9"],
+      "dependencies": [
+        "P0-9"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -108,7 +128,9 @@
       "phase": "Phase 1: 托管锦标赛(A)",
       "name": "后台 worker",
       "description": "定时采集 + 赛后触发 Monte Carlo 重算晋级概率",
-      "dependencies": ["P1-1"],
+      "dependencies": [
+        "P1-1"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -117,7 +139,9 @@
       "phase": "Phase 1: 托管锦标赛(A)",
       "name": "Monte Carlo 锦标赛模拟器",
       "description": "10000 次向量化模拟整个锦标赛，聚合各队晋级/夺冠概率",
-      "dependencies": ["P1-1"],
+      "dependencies": [
+        "P1-1"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -126,7 +150,9 @@
       "phase": "Phase 1: 托管锦标赛(A)",
       "name": "FastAPI + SQLite schema",
       "description": "只读端点 + DB schema(teams/matches/events/predictions/tournament_probs 等) + 持久化方案",
-      "dependencies": ["P1-1"],
+      "dependencies": [
+        "P1-1"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -135,7 +161,9 @@
       "phase": "Phase 1: 托管锦标赛(A)",
       "name": "前端骨架 + 4 页面",
       "description": "React+Recharts 骨架；总览页(夺冠榜+视图切换+今日比赛+今日变动)/球队详情(晋级阶梯+bracket)/比赛详情(赛前预测,实时留位)/方法论页",
-      "dependencies": ["P1-4"],
+      "dependencies": [
+        "P1-4"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -144,7 +172,9 @@
       "phase": "Phase 1: 托管锦标赛(A)",
       "name": "透明度层",
       "description": "置信区间/阴影带 + 模型依据展开 + 历史准确率 + 免责声明",
-      "dependencies": ["P1-5"],
+      "dependencies": [
+        "P1-5"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -153,7 +183,9 @@
       "phase": "Phase 1: 托管锦标赛(A)",
       "name": "部署上线",
       "description": "前端静态托管(Vercel/CF Pages) + 后端 worker(Fly/小VPS) + DB持久化 + .env 注入",
-      "dependencies": ["P1-6"],
+      "dependencies": [
+        "P1-6"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -162,7 +194,9 @@
       "phase": "Phase 1: 托管锦标赛(A)",
       "name": "A 阶段验收",
       "description": "公开站能访问 + 晋级概率随赛果更新 + 透明度可见",
-      "dependencies": ["P1-7"],
+      "dependencies": [
+        "P1-7"
+      ],
       "passes": false,
       "assignee": "SYF"
     },
@@ -171,7 +205,9 @@
       "phase": "Phase 2: 实时增量(B)",
       "name": "实时事件采集 + 实时胜率模型",
       "description": "赛中轮询事件(付费API) + Poisson 剩余时间模拟 + game state 修正",
-      "dependencies": ["P1-8"],
+      "dependencies": [
+        "P1-8"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -180,7 +216,9 @@
       "phase": "Phase 2: 实时增量(B)",
       "name": "实时推送 + 曲线 + 转折点",
       "description": "WebSocket/SSE 推送 + 比赛详情页实时曲线 + 转折点标注('72′红牌,胜率61%→38%')",
-      "dependencies": ["P2-1"],
+      "dependencies": [
+        "P2-1"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -189,7 +227,9 @@
       "phase": "Phase 2: 实时增量(B)",
       "name": "晨起回看 + 飞书推送",
       "description": "后台存曲线 + 胜率跳变触发事件标注 + 晨起摘要卡片 + 飞书推送",
-      "dependencies": ["P2-2"],
+      "dependencies": [
+        "P2-2"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -198,7 +238,9 @@
       "phase": "Phase 2: 实时增量(B)",
       "name": "B 阶段验收",
       "description": "重点场实时曲线跑通 + 晨起回看可用",
-      "dependencies": ["P2-3"],
+      "dependencies": [
+        "P2-3"
+      ],
       "passes": false,
       "assignee": "SYF"
     },
@@ -207,7 +249,9 @@
       "phase": "Phase 3: 打磨",
       "name": "移动端 + 分享 + bracket",
       "description": "移动端适配 + 分享/截图 + 完整 bracket 可视化",
-      "dependencies": ["P2-4"],
+      "dependencies": [
+        "P2-4"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -216,7 +260,9 @@
       "phase": "Phase 3: 打磨",
       "name": "README + 开源完善",
       "description": "README + 方法论文档 + 自部署指引(BYO key) + License",
-      "dependencies": ["P1-8"],
+      "dependencies": [
+        "P1-8"
+      ],
       "passes": false,
       "assignee": "Claude"
     },
@@ -225,7 +271,10 @@
       "phase": "Phase 3: 打磨",
       "name": "最终验收",
       "description": "完整形态跑通整个赛期：实时+透明+可解释",
-      "dependencies": ["P3-1", "P3-2"],
+      "dependencies": [
+        "P3-1",
+        "P3-2"
+      ],
       "passes": false,
       "assignee": "SYF"
     }
