@@ -425,6 +425,38 @@ class DixonColes:
         elo 同样应传 as_of 时点的 Elo 快照(用 EloModel.ratings_at)."""
         return self.fit(df, as_of=as_of, elo=elo)
 
+    @classmethod
+    def from_artifacts(cls, parquet_path, json_path) -> "DixonColes":
+        """从持久化产出加载模型 → 可直接 predict, 无需 refit.  (P0-6, P1 API 基础设施)
+
+        输入: dixon_coles_current.parquet(team/attack/defense/n_eff) +
+              dixon_coles_global.json(mu/gamma/gamma_host/rho/half_life/...)
+        返回: _fitted=True 的 DixonColes, attack/defense/mu/gamma/rho/n_eff 就位,
+              half_life/importance/shrink 元信息也从 json 还原(自描述, 供再拟合或展示).
+        """
+        frame = pd.read_parquet(parquet_path)
+        with open(json_path) as f:
+            gp = json.load(f)
+        m = cls(
+            half_life_days=gp.get("half_life_days", DEFAULT_HALF_LIFE_DAYS),
+            host_bonus=gp.get("gamma_host", 0.0),
+            use_importance_weight=gp.get("importance_weight", True),
+            shrinkage_kappa=gp.get("shrinkage_kappa", DEFAULT_SHRINKAGE_KAPPA),
+        )
+        m.mu = float(gp["mu"])
+        m.gamma = float(gp["gamma"])
+        m.gamma_host = float(gp["gamma_host"])
+        m.rho = float(gp["rho"])
+        m.attack = {str(t): float(v) for t, v in zip(frame["team"], frame["attack"])}
+        m.defense = {str(t): float(v) for t, v in zip(frame["team"], frame["defense"])}
+        m.teams = [str(t) for t in frame["team"]]
+        m.neff = ({str(t): float(v) for t, v in zip(frame["team"], frame["n_eff"])}
+                  if "n_eff" in frame.columns else {})
+        m.shrink_beta = gp.get("shrink_beta")
+        m.shrink_applied = gp.get("shrink_applied", False)
+        m._fitted = True
+        return m
+
     def predict(self, home: str, away: str,
                 neutral: bool = True, host_home: bool = False, host_away: bool = False,
                 max_goals: int = MAX_GOALS) -> dict:
