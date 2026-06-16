@@ -76,8 +76,10 @@
       "dependencies": [
         "P0-5"
       ],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-16",
+      "note": "单场预测管线: 把 DixonColes.predict() 包装成产品就绪接口 + 支持从持久化产出加载(无需refit), 为 P1-3 Monte Carlo / P1-4 FastAPI 提供单场预测原子能力. 三层: ① DixonColes.from_artifacts(parquet,json) classmethod: 从 dixon_coles_current.parquet(team/attack/defense/n_eff)+global.json(μ/γ/γ_host/ρ/half_life/importance/shrink元信息)加载, 设 _fitted=True 可直接 predict, 全局参数/队参数/n_eff/自描述元信息全还原(往返一致). ② match_predictor.py 纯函数: top_scores(score_matrix,n)提 Top-N 最可能比分(含τ修正) + expected_goals(τ修正后边际) + predict_match → 整洁 dict(胜平负%/λ/期望/Top-N/比分矩阵). ③ WCPredictor: 加载 DC 产出 + 2026 分组 csv, 自动 neutral/host 判定(恰一方东道主本土→neutral=False 享基础 γ; 双东道主→neutral 对消; 都非东道主→中立). WC 东道主=美/加/墨.\nWC 东道主主场决策(用户拍板): 东道主本土场 neutral=False 享基础 γ(与 martj42 数据编码一致 + 本土观众/少旅行真实存在); P0-4 已证 γ_host(东道主额外加成)=0, 故 host_home/host_away flag 不改 λ, 真正影响预测的只有 neutral→γ. 双东道主相遇两边主场对消→中立.\n验证: demo 跑通(Spain-Japan 中立 38.5/29.2/32.3; Argentina-France 52.5/29.4/18.1; US 本土享 γ +9.7pp 与 dixon_coles 自检一致; Mexico-Ecuador 本土 0-0 Top1 20%). CLI: python match_predictor.py Home Away. 19 match_predictor 单测(top_scores 排序+最大格首项/expected_goals 边际/predict_match 守恒+字段/from_artifacts 往返参数predict一致+n_eff元信息还原/wc_neutral_host 四情形/真实产出集成: Spain中立·US本土享γ·未入历史数据队默认均值) + DC33+elo22 全过(74/74 无回归). 产出无新增(from_artifacts 读已有 parquet/json). 单场原子能力就绪."
     },
     {
       "id": "P0-7",
