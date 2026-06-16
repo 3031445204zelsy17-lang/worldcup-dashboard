@@ -129,7 +129,8 @@
         "P0-9"
       ],
       "passes": false,
-      "assignee": "Claude"
+      "assignee": "Claude",
+      "note": "数据源决策(2026-06-16 对齐, 待开建): API-Football 免费档对 2026 赛季 paywall(仅 2022-2024, 实测 fixtures?league=1&season=2026 报 'Free plans do not have access to this season')→ 不能作主源. 改免费策略: 主源=martj42 GitHub CSV(免费, 含 2026 WC 全赛程+赛完填比分, 延迟~1天内; 队名==模型队名零映射成本), 备源=football-data.org 免费档(WC 含, 比分延迟, 交叉验证). 策略=先做免费 B(martj42 主链路 + 三层缓存)看效果, 不错再升 A(API-Football Pro ~$19/月, 解锁赛中实时事件做 Phase 2). API-Football key 已确认可用(/status: Free, 100/天, active 到 2027, 但 2026 paywall). probe_api.py 已就绪(升 A 时从 .env 读 key 直接用, 用 requests 免 macOS SSL 坑). P1-1 结构: backend/data/{schema,cache,collector,sources/{martj42,football_data}} + test. 关键技术点: martj42 队名==Phase0 训练队名; diff 检测 score NaN→有值=新完赛→触发 P1-2 重算; SQLite 温缓存供 P1-4 FastAPI 读; poll 频率留 P1-2. 详见本对话末尾 Phase 1 工程拆解."
     },
     {
       "id": "P1-2",
