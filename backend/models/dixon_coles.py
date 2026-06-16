@@ -35,12 +35,16 @@ P0-4 Dixon-Coles 单场比分模型
 1. 【与 Elo 的分工】Elo 给"实力标量"(谁强), Dixon-Coles 给"攻防二维 + 比分分布"
    (强多少、踢成几比几). 两者不重叠: Elo 靠滚动更新实现近期性, DC 靠 φ(t) 显式
    衰减. 本层不复加高原 H(已由 Elo 层 home_advantage_for 处理), 不双重计权.
-2. 【东道主加成 ⭐】世界杯是中立场, 普通 γ=0; 但东道主(2026=美/加/墨)在自己国家
-   作战仍享真实优势(全国助威/赛程/裁判心理). 训练数据里:
-     host_match = (neutral=True 且 home_team == country)   ← 锦标赛东道主
-   普通主场(neutral=False)用 γ, 东道主锦标赛场用 γ_host, 二者独立不重叠(无双重计).
-   三国联办的赛区差异(美国赛区获益最大/墨西哥城高原)留 Phase 1 精修, P0 用统一 γ_host,
-   回测(P0-7)开关对比后定夺是否进 Phase 1.
+2. 【东道主加成已砍 ⚠️】曾设 γ_host 给世界杯东道主额外加成, 2026 前向验证证伪:
+   ① 赛前样本(排除 2026)拟合 γ_host=0——历史东道主虽有 121 场/61% 胜率, 但时间衰减
+      (半衰期 2 年)把老样本杀光(有效权重仅 1.3), 只剩近 4 届(含卡塔尔 2022 小组全败)
+      信号被稀释;
+   ② 东道主优势已被 γ(东道主场 neutral=False 享 γ)+ 队参数(主场友谊赛/预选赛水分)双重
+      吸收, γ_host 无独立信号; 强行拟合要么=0, 要么靠目标数据泄露假非零(全量 fit 的 0.098
+      就是偷看 2026 东道主 2 胜 1 平反推).
+   → γ_host 默认固定 0(host_bonus 参数), 东道主优势改由 γ+队参数两条干净渠道体现.
+     队参数主场水分的根治在 P0-5 收缩(Elo 先验). 赛区级加成(美国赛区/墨西哥城高原交叉)
+     留 Phase 1. predict 保留 host_home/host_away 接口但默认无作用(γ_host=0), 备 Phase 1.
 3. 【参数可识别】attack 全队均值归一(Σ att_log = 0), 让 μ 吸收基准; defense 自由.
    归一在 nll 内部用 reparametrization(att_log − att_log.mean())实现, 无需约束优化,
    L-BFGS-B 无约束跑得快且稳.
@@ -135,18 +139,19 @@ class DixonColes:
     """
 
     def __init__(self, half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
-                 host_bonus: float | None = None) -> None:
+                 host_bonus: float = 0.0) -> None:
         """
         half_life_days: 时间衰减半衰期(天). 默认 730(2 年).
-        host_bonus:     None=从数据拟合 γ_host; 给定 float=固定该值不拟合(回测对照用).
+        host_bonus:     东道主额外加成(固定值, 默认 0=不加成). 经前向验证证伪不再拟合
+                        (详见模块 docstring 设计说明第 2 条). 传非 0 可做敏感性试验.
         """
         self.half_life_days = half_life_days
-        self.host_bonus = host_bonus  # None 表示拟合
+        self.host_bonus = host_bonus
 
         # 拟合结果
         self.mu: float = 0.0
         self.gamma: float = 0.0
-        self.gamma_host: float = host_bonus if host_bonus is not None else 0.0
+        self.gamma_host: float = host_bonus
         self.rho: float = 0.0
         self.attack: dict[str, float] = {}    # exp 化后的进攻参数(>0, 均值≈1)
         self.defense: dict[str, float] = {}   # exp 化后的防守参数(>0, 均值≈1)
@@ -238,10 +243,8 @@ class DixonColes:
                   [BOUNDS["gamma_host"]] + [BOUNDS["rho"]] +
                   [BOUNDS["log_param"]] * n + [BOUNDS["log_param"]] * n)
 
-        # host_bonus 固定时, 把 gamma_host 的 bound 钉死在该值(不优化)
-        fix_host = self.host_bonus is not None
-        if fix_host:
-            bounds[2] = (self.host_bonus, self.host_bonus)
+        # γ_host 不再拟合(前向验证证伪): 钉死 bound = host_bonus(默认 0). 赛区级加成留 Phase 1.
+        bounds[2] = (self.host_bonus, self.host_bonus)
 
         res = minimize(self._neg_log_likelihood, x0, args=(P,), method="L-BFGS-B",
                        bounds=bounds, options={"maxiter": 500})
@@ -385,19 +388,19 @@ if __name__ == "__main__":
     print(sc.to_string(index=False))
     print("-" * 64)
 
-    # 2026 三东道主: 纯中立场 vs 东道主主场(本国作战+锦标赛加成) 对照, 对手取中游 Switzerland
+    # 2026 三东道主: 纯中立 vs 本国主场(享普通 γ; γ_host 已砍见设计说明第 2 条), 对手 Switzerland
     hosts = ["United States", "Canada", "Mexico"]
     opp = "Switzerland"
-    print(f"2026 东道主加成对照 (对手 {opp}):")
+    print(f"2026 东道主: 纯中立 vs 本国主场(γ={model.gamma:.3f}) 对照, 对手 {opp}:")
     for h in hosts:
         if h not in model.attack:
             print(f"  {h}: 不在历史数据(跳过)")
             continue
-        p_neu = model.predict(h, opp, neutral=True, host_home=False)   # 纯中立(基准)
-        p_host = model.predict(h, opp, neutral=False, host_home=True)   # 东道主主场: γ + γ_host
+        p_neu = model.predict(h, opp, neutral=True)     # 纯中立(基准)
+        p_home = model.predict(h, opp, neutral=False)    # 本国主场: 享 γ
         print(f"  {h:14s} 纯中立 胜率={p_neu['home_win']:5.1%} (λ={p_neu['lambda_home']:.2f})"
-              f"  →  东道主主场 胜率={p_host['home_win']:5.1%} (λ={p_host['lambda_home']:.2f})"
-              f"  Δ=+{(p_host['home_win']-p_neu['home_win'])*100:4.1f}pp")
+              f"  →  本国主场 胜率={p_home['home_win']:5.1%} (λ={p_home['lambda_home']:.2f})"
+              f"  Δ=+{(p_home['home_win']-p_neu['home_win'])*100:4.1f}pp (仅 γ)")
     print("-" * 64)
     print(f"已存: {OUT_PARQUET.name} + {OUT_JSON.name}")
     print("=" * 64)
