@@ -102,8 +102,10 @@
       "dependencies": [
         "P0-7"
       ],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-16",
+      "note": "评估指标, 只读 P0-7 backtest parquet + 一次 κ 细扫重跑. evaluate.py 三块:\n[1] 校准(decile reliability + ECE): 纯Elo ECE均值0.062(最优), DC生产0.081, DC+收缩0.080. 校准曲线数据存 backtest_calibration.parquet(供 P1-5 前端画 reliability 图). Elo 三类都最贴对角线.\n[2] Brier/准确率分拆: 纯Elo 54.7%/0.5992 > DC+收缩 49.2%/0.6185 > DC生产 46.9%/0.6304. 2022 对 DC 特别难(B 40.6%/C 43.8% vs 2018 53%/55%), Elo 两年都稳. DC 平局 recall 仅7.1%(系统性盲点).\n[3] 平局低估分析 + draw-boost: ⚠️修正 P0-4/P0-7 误判! DC 平均预测平局率 28.9% > 实际 21.9% —— DC 其实【高估】平局概率, '低估'是 top-pick 层面(平局很少是最高项 6.2%, 足球模型常态). 故乘性 draw-boost 扫描 best_k=1.0(完全无用, 再乘必过). 平局是 argmax 结构问题, 非概率校准, 不可简单修.\n[Part B κ 细扫](backtest_kappa_sweep.parquet, 868s): 准确率/Brier 在 κ=50-100 到顶(距纯 Elo 仅~1-2pp), 风格(log net std)κ=500 归零. sweet spot κ≈20-50: κ=20 acc52.3%/Brier0.6076/风格0.110(κ0的28%); κ=50 acc53.1%/0.6024/0.059(15%). → 强收缩的 DC 能拿到 Elo 鲁棒性的绝大部分 + 保留攻防风格(比分分布/方法论叙事).\n结论/P0-9 输入: ① 推翻 P0-5『收缩默认关』, 生产应开强收缩(κ≈20-50); ② DC 任何 κ 都被 Elo 主导准确率, 但强收缩 DC(κ20-50) 仅差~2pp 却保住比分分布能力 → 推荐作统一模型(Elo 鲁棒+DC 富输出); ③ 准确率天花板~53-55%(非原设60%), 仍撑得起『透明+可解释』定位; ④ 校准曲线贴对角线程度: Elo 最好, DC 次之. ⑤ 博彩赔率反推跳过(数据集无赔率, nice-to-have). 产出: evaluate.py + test_evaluate(6单测) + backtest_calibration.parquet + backtest_kappa_sweep.parquet. 88 测试全过(DC33+elo22+match_predictor19+backtest8+evaluate6)."
     },
     {
       "id": "P0-9",
