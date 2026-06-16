@@ -35,9 +35,12 @@ from match_predictor import wc_neutral_host, WC2026_HOSTS  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 HIST = ROOT / "data" / "processed" / "international_history.parquet"
 OUT = ROOT / "data" / "processed" / "backtest_2018_2022.parquet"
+OUT_SWEEP = ROOT / "data" / "processed" / "backtest_kappa_sweep.parquet"
 
 WINDOW_DAYS = 365 * 10           # DC 拟合窗口(10 年: 预测与全量差 0.01pp, 拟合快 5×)
 KAPPAS = {"elo": 1e4, "dc": 0.0, "dcs": 5.0}   # 变体 → κ(A 纯Elo / B 生产 / C 收缩)
+SWEEP_KAPPAS = {"k0": 0.0, "k3": 3.0, "k5": 5.0, "k10": 10.0, "k20": 20.0,
+                "k50": 50.0, "k100": 100.0, "k500": 500.0, "k1e4": 1e4}  # P0-8 κ 细扫
 
 # 2018/2022 东道主(本土场享基础 γ; 与 match_predictor.WC2026_HOSTS 分开, 历史东道主不同)
 HOSTS_BY_YEAR = {
@@ -81,10 +84,12 @@ def walk_forward_elo(df: pd.DataFrame, bt_mask: pd.Series) -> dict:
 # ============================================================
 # DC walk-forward: 每个回测场 1 次窗口 MLE 拟合 → 派生 3 个 κ 变体
 # ============================================================
-def predict_backtest_match(df: pd.DataFrame, match: pd.Series, elo_snap: dict) -> dict:
-    """对单场回测赛: 10 年窗口 fit MLE → shrunk_variant 派生 3 变体 → 各自 predict.
+def predict_backtest_match(df: pd.DataFrame, match: pd.Series, elo_snap: dict,
+                           kappas: dict = KAPPAS, return_mle: bool = False):
+    """对单场回测赛: 10 年窗口 fit MLE → shrunk_variant 派生各 κ 变体 → 各自 predict.
 
-    返回该场的全部预测字段(neutral/host 按历史东道主判定; Elo 含基础 γ 一致).
+    kappas: {变体名: κ}. 默认 KAPPAS(A 纯Elo/B 生产/C 收缩). return_mle=True 额外返回 MLE
+    模型(供 κ 细扫算 style retention). 返回该场预测字段 dict(+ 可选 m_mle).
     """
     d = pd.Timestamp(match["date"])
     win = df[(df["date"] >= d - pd.Timedelta(days=WINDOW_DAYS)) & (df["date"] < d)]
@@ -103,13 +108,15 @@ def predict_backtest_match(df: pd.DataFrame, match: pd.Series, elo_snap: dict) -
     H = home_advantage_for(match["city"], bool(match["neutral"]))
     out["elo_exp"] = expected(out["elo_home"], out["elo_away"], H)
 
-    for vname, kappa in KAPPAS.items():
+    for vname, kappa in kappas.items():
         m_var = m_mle if kappa == 0.0 else m_mle.shrunk_variant(elo_snap, kappa)
         p = m_var.predict(match["home_team"], match["away_team"],
                           neutral=neutral, host_home=host_home, host_away=host_away)
         out[f"{vname}_home_win"] = p["home_win"]
         out[f"{vname}_draw"] = p["draw"]
         out[f"{vname}_away_win"] = p["away_win"]
+    if return_mle:
+        return out, m_mle
     return out
 
 
@@ -125,7 +132,7 @@ def outcome(h, a):
 # ============================================================
 # 主流程
 # ============================================================
-def run_backtest(hist_path=HIST, out_path=OUT, verbose=True):
+def run_backtest(hist_path=HIST, out_path=OUT, kappas=KAPPAS, verbose=True):
     df = pd.read_parquet(hist_path)
     bt = df[(df["tournament"] == "FIFA World Cup") & (df["year"].isin([2018, 2022]))].sort_values("date")
     bt_mask = df.index.isin(bt.index)
@@ -141,7 +148,7 @@ def run_backtest(hist_path=HIST, out_path=OUT, verbose=True):
 
     rows = []
     for i, (idx, match) in enumerate(bt.iterrows()):
-        pred = predict_backtest_match(df, match, elo_snaps[idx])
+        pred = predict_backtest_match(df, match, elo_snaps[idx], kappas=kappas)
         actual = outcome(int(match["home_score"]), int(match["away_score"]))
         row = {
             "date": match["date"], "year": int(match["year"]),
@@ -150,7 +157,7 @@ def run_backtest(hist_path=HIST, out_path=OUT, verbose=True):
             "actual": actual,
             **pred,
         }
-        for vname in KAPPAS:
+        for vname in kappas:
             probs = {"H": pred[f"{vname}_home_win"], "D": pred[f"{vname}_draw"], "A": pred[f"{vname}_away_win"]}
             top = max(probs, key=probs.get)
             row[f"{vname}_pred"] = top
@@ -209,11 +216,73 @@ def _print_summary(res):
     print("=" * 78)
 
 
+def run_kappa_sweep(hist_path=HIST, out_path=OUT_SWEEP, kappas=SWEEP_KAPPAS, verbose=True):
+    """P0-8 κ 细扫: 同 walk-forward(单 MLE 派生多 κ), 输出 准确率/Brier/风格保留 vs κ.
+
+    风格保留 = 各队 log(net_strength) 的 std(越大=攻防风格差异越保留). κ→∞ 时 net→1, std→0.
+    产出 backtest_kappa_sweep.parquet(每 κ 一行) → P0-9 选生产 κ 的决策输入.
+    """
+    df = pd.read_parquet(hist_path)
+    bt = df[(df["tournament"] == "FIFA World Cup") & (df["year"].isin([2018, 2022]))].sort_values("date")
+    bt_mask = pd.Series(df.index.isin(bt.index), index=df.index)
+    if verbose:
+        print(f"κ 细扫: {len(bt)} 场, κ 档 {list(kappas.values())}. 拟合中(同 walk-forward, ~15min)…")
+    t0 = time.time()
+    elo_snaps = walk_forward_elo(df, bt_mask)
+    hits = {k: 0 for k in kappas}
+    briers = {k: 0.0 for k in kappas}
+    style = {k: [] for k in kappas}
+    n = 0
+    for i, (idx, match) in enumerate(bt.iterrows()):
+        pred, m_mle = predict_backtest_match(df, match, elo_snaps[idx], kappas=kappas, return_mle=True)
+        actual = outcome(int(match["home_score"]), int(match["away_score"]))
+        onehot = {"H": 0.0, "D": 0.0, "A": 0.0}
+        onehot[actual] = 1.0
+        for vname, kappa in kappas.items():
+            pH = pred[f"{vname}_home_win"]; pD = pred[f"{vname}_draw"]; pA = pred[f"{vname}_away_win"]
+            top = max([("H", pH), ("D", pD), ("A", pA)], key=lambda x: x[1])[0]
+            hits[vname] += int(top == actual)
+            briers[vname] += (pH - onehot["H"]) ** 2 + (pD - onehot["D"]) ** 2 + (pA - onehot["A"]) ** 2
+            m_var = m_mle if kappa == 0.0 else m_mle.shrunk_variant(elo_snaps[idx], kappa)
+            nets = np.array([m_var.attack[t] / m_var.defense[t] for t in m_var.teams])
+            style[vname].append(float(np.std(np.log(nets))))
+        n += 1
+        if verbose and (i + 1) % 16 == 0:
+            print(f"  {i+1}/{len(bt)} 场, {time.time()-t0:.0f}s")
+    rows = [{"variant": v, "kappa": k, "accuracy": hits[v] / n, "brier": briers[v] / n,
+             "style_retention": float(np.mean(style[v]))} for v, k in kappas.items()]
+    res = pd.DataFrame(rows)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    res.to_parquet(out_path, index=False)
+    if verbose:
+        print(f"\n已存 {out_path.name}, 总耗时 {time.time()-t0:.0f}s")
+        _print_sweep(res)
+    return res
+
+
+def _print_sweep(res):
+    print("\n" + "=" * 74)
+    print("κ 细扫(准确率/Brier vs 风格保留)")
+    print("-" * 74)
+    print(f"{'κ':>10}{'准确率':>9}{'Brier':>9}{'风格保留(log net std)':>24}")
+    for _, r in res.iterrows():
+        ks = "→∞" if r["kappa"] >= 1e4 else f"{r['kappa']:.0f}"
+        print(f"{ks:>10}{r['accuracy']:>8.1%}{r['brier']:>9.4f}{r['style_retention']:>22.3f}")
+    print("-" * 74)
+    best = res.loc[res["brier"].idxmin()]
+    print(f"Brier 最优: κ={best['kappa']:.1f}  acc={best['accuracy']:.1%}  brier={best['brier']:.4f}")
+    print("→ 选生产 κ = 准确率/Brier(偏小κ档) vs 风格保留/比分分布细节(偏大κ档) 的权衡; P0-9 决策.")
+    print("=" * 74)
+
+
 if __name__ == "__main__":
     if "--summary" in sys.argv:
         # 从已存 parquet 直接出汇总(不重拟合), 便于复看 / P0-8 预热
         res = pd.read_parquet(OUT)
         print(f"读取 {OUT.name} ({len(res)} 场) — 仅汇总, 不重拟合\n")
         _print_summary(res)
+    elif "--kappa-sweep" in sys.argv:
+        # P0-8: κ 细扫(同 walk-forward, 单 MLE 派生多 κ), 找准确率-vs-风格权衡
+        run_kappa_sweep()
     else:
         run_backtest()
