@@ -193,8 +193,10 @@
       "dependencies": [
         "P1-5"
       ],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-17",
+      "note": "P1-6 透明度层完成, 4 块全交付 + Playwright 真实数据验收 4 页全通. 透明度是项目核心卖点(实时+透明+可解释), 本任务把'概率可信度/模型依据/历史局限/免责'四层落地.\n[1]置信区间/阴影带: Wilson 95% CI 量化 MC 抽样不确定性(n=10000, 边界稳健优于正态近似——p=0→[0,0.0004]不溢出). queries.wilson_interval(p,n) 纯函数; router 按当前 view 给每队 ci_low/ci_high(Overview 夺冠榜 ±X.X 文字 14.6%±0.7); advancement_path 每格带 ci(TeamDetail 晋级阶梯 Recharts ErrorBar 7 组阴影带). 诚实边界: ± 只反映 MC 重抽样的概率波动, 不含模型参数本身的贝叶斯不确定性(更深的题留未来).\n[2]模型依据展开: DriversPanel 从'elo差+场地'升级为可解释 λ 拆解. queries 模块级 lazy 加载 DC artifacts(load_dc 进程单例), match/team_drivers 暴露 attack/defense 原值+48队排名(attack/defense 同降序, 1=最强——defense 大=对方λ小=少失球=防守好); DriversPanel 展开显示 λ(主)=exp(μ)·攻主/防客·exp(γ) 逐步代入, 与 prediction lambda_home 逐位一致(差0.0000). 用户能看见'87%主胜'怎么从 Elo差+攻防参数算出来. data_status 仍 pending(伤病/天气/海拔 P2), 核心依据(elo+攻防)已透明.\n[3]历史准确率: Methodology 加(a)分年准确率 2018(纯Elo56.3/DC53.1/DCs54.7%) vs 2022(53.1/40.6/43.8%)——2022 对 DC 系列明显更难; (b)已知局限卡: 平局结构盲点(实际21.9%但生产 dcs 把平局预测对仅0.0%——平局极少成单场最高概率项, 非校准问题不可简单修) + 天花板53-55%诚实说明. backtest_summary 读 P0-7 parquet 算 draw_recall/per_year.\n[4]免责声明: 新建 Disclaimer 全局 footer(App.jsx 每页可见)——非博彩建议/天花板/数据源(martj42→Elo→DC κ=20→MC10000)/worker赛后更新/P2留位, 替换原简陋 footer.\n关键修复(验收抓的 bug): DC defense 排名方向初始实现搞反(升序=小好), 验收时 Spain def_rank=45(顶级队防守倒数荒谬)触发警觉, 核对 dixon_coles.py:11 lnλ=μ+att−def + :509 λ=exp(μ)·att·1/def 确认 defense 大=防守好, 改降序后 Spain def_rank=4/Argentina=1(防守最强); λ拆解与prediction逐位一致才敢定论. 这是只有端到端真实验收才发现的语义bug.\n验证: test_transparency.py 13 新测(Wilson边界/对称/含点估计/n=0/clamp + path带CI + drivers攻防 Spain attack_rank1 + backtest limitations prod_draw_recall<0.15) + test_api 加 CI 断言; 全量197过(原184+13)零回归; npm build过(848模块); Playwright 4页真实数据验收(Overview±CI / TeamDetail 7 ErrorBar / MatchDetail λ拆解 Spain-CapeVerde λ主3.08 / Methodology 局限+分年) + 截图存档 docs/screenshots/(加.gitignore不入库).\n诚实标注推迟: 今日变动 diff 仍占位(P1-6 spec 不含, 需 worker 存 tournament_probs 历史快照, Overview 占位文案已从'留P1-6'改'留后续阶段'); bracket对阵树/实时曲线仍 P2/P3.\n产出: backend/api/{queries.py(+wilson/load_dc/_dc_ranks/攻防/limitations), schemas.py(StepItem/TournamentTeam加CI, Drivers加攻防字段), routers/tournament.py(view CI), test_transparency.py(新13测), test_api.py(CI断言)} + frontend/src/{App.jsx(挂Disclaimer), components/{AdvancementLadder(ErrorBar), DriversPanel(λ拆解), Disclaimer(新)}, pages/{Overview(±CI), TeamDetail(steps), Methodology(局限+分年)}}. 影响下游: P1-7 部署时透明度层随前端构建一起上; 透明度是公开站核心差异化(对标博彩公司黑箱)."
     },
     {
       "id": "P1-7",
