@@ -1,0 +1,53 @@
+# 版本控制 / 编辑器
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+
+# Python 缓存 / 虚拟环境
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# 数据库(绝不进镜像, 走 Azure Files 持久卷; worker 首启自建)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/wc.db
+data/worker.pid
+
+# 原始大数据(不部署)
+data/raw/*
+
+# worker 运行时快照(不进镜像); 但保留 data/processed/ 的模型 artifacts!
+data/processed/matches_snapshot_*
+
+# 前端(后端镜像不需要; Vercel 单独部署前端)
+frontend/
+node_modules/
+dist/
+.vite/
+
+# 文档 / 截图 / 预览图
+docs/
+*.png
+
+# 敏感配置(容器用平台 env 注入, 不进镜像)
+.env
+.env.*
+
+# 部署脚本本身(不进镜像)
+azure/
+
+# 项目管理
+.claude/
+progress.json
+CLAUDE.md

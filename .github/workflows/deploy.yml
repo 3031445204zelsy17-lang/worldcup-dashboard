@@ -1,0 +1,88 @@
+# .github/workflows/deploy.yml — 后端自动部署到 Azure Container Apps
+#
+# 触发: push main / 手动。流程: 生成模型 artifacts(cache) → ACR 云端构建 → 更新 Container App。
+# 前提(一次性, 见 docs/deployment.md): 已跑 azure/provision.sh 建好资源 + GitHub Secrets 配好 Azure 凭据。
+# 注意: 若 provision.sh 改了资源名, 同步改下面 env 的 RG_NAME/ACR_NAME/ACA_NAME。
+name: Deploy Backend to Azure Container Apps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write      # OIDC: GitHub 向 Azure 领 token(无需 client secret)
+  contents: read
+
+env:
+  RG_NAME: wc2026-rg
+  ACR_NAME: wc2026acr
+  ACA_NAME: wc2026-api
+  IMAGE: wc2026acr.azurecr.io/wc2026-backend:latest
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. 缓存模型 artifacts(生成 ~15min, 模型代码不变就复用 → 秒级)
+      - name: Cache model artifacts
+        id: cache-artifacts
+        uses: actions/cache@v4
+        with:
+          path: data/processed
+          key: artifacts-${{ hashFiles('backend/models/**/*.py', 'backend/data/**/*.py') }}
+          restore-keys: |
+            artifacts-
+
+      # 2. cache miss 时按生成链跑(默认不跑 κ-sweep, ~15min)。ALLOW_NETWORK=1 给 load_results 下载 martj42
+      - name: Set up Python
+        if: steps.cache-artifacts.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate model artifacts
+        if: steps.cache-artifacts.outputs.cache-hit != 'true'
+        run: |
+          pip install --quiet -r requirements.txt
+          export ALLOW_NETWORK=1
+          python backend/data/load_results.py        # → international_history.parquet (martj42 下载)
+          python backend/models/elo.py               # → elo_current.parquet
+          python backend/models/dixon_coles.py        # → dixon_coles_current.parquet + .json (κ=20 收缩)
+          python backend/data/worldcup_2026_groups.py # → worldcup_2026_groups.csv
+          python backend/models/backtest.py           # → backtest_2018_2022.parquet (128 场回测)
+          python backend/models/evaluate.py           # → backtest_calibration.parquet
+
+      - name: Verify artifacts present
+        run: |
+          for f in international_history.parquet elo_current.parquet \
+                   dixon_coles_current.parquet dixon_coles_global.json \
+                   worldcup_2026_groups.csv backtest_2018_2022.parquet \
+                   backtest_calibration.parquet; do
+            test -f "data/processed/$f" || { echo "MISSING $f"; exit 1; }
+          done
+
+      # 3. Azure 登录(OIDC, 无 secret)。
+      #    降级(client secret): 注释下三行 client-id/tenant-id/subscription-id, 改用
+      #      creds: ${{ secrets.AZURE_CREDENTIALS }}
+      #    并在 provision 后跑 `az ad sp create-for-rbac --name wc2026-gh --role Contributor \
+      #      --scopes <acr-id> <rg-id> --sdk-auth` 把 JSON 存为 AZURE_CREDENTIALS。
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # 4. ACR 云端构建推送(az acr build 上传 context 到 ACR 构建, runner 无需本地 docker daemon)
+      - name: Build and push image to ACR
+        run: |
+          az acr build --registry "$ACR_NAME" --image wc2026-backend:latest --file Dockerfile .
+
+      # 5. 更新 Container App(拉新镜像, 滚动重启; env/volume/ingress 在 provision.sh 已设好)
+      - name: Deploy to Container App
+        run: |
+          az containerapp update --name "$ACA_NAME" --resource-group "$RG_NAME" --image "$IMAGE" \
+            --query properties.latestRevisionName -o tsv
