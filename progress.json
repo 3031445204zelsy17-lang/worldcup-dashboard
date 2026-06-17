@@ -2,7 +2,7 @@
   "project": "World Cup Probability Dashboard 2026",
   "deadline": "2026-07-19",
   "repo": "",
-  "last_updated": "2026-06-16",
+  "last_updated": "2026-06-17",
   "context": "产品设计阶段完成（见 docs/）。开源+公开网站；架构=托管/后台采集只读；节奏=A先行(托管锦标赛)→B实时增量。详见 docs/project-context.md 与 docs/architecture.md",
   "tasks": [
     {
@@ -141,8 +141,10 @@
       "dependencies": [
         "P1-1"
       ],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-17",
+      "note": "后台 worker 完成, 把 P1-1 采集层 + P1-3 模拟器拼成定时循环, 落实 CLAUDE.md「后台采集+用户只读」(用户访问 0 次外部 API, 额度与用户数解耦). \nbackend/worker.py: tick(采集→diff→条件重算+持久化) + run_forever(常驻循环) + acquire/release_pidfile(单实例守卫) + load_dotenv(零依赖 .env loader) + CLI(--once/--dry/常驻). 核心设计: ①【DB 单一真相源】重算 fixtures=cache.get_all()(刚采集进 DB 的最新含已完赛比分), 不依赖 martj42 本地副本刷新时序, 比 P1-3 默认离线 fixtures 更准 —— test_fixtures_come_from_db 直接断言 DB 比分透传给模拟器; ②【纯同步循环】while+threading.Event.wait 可打断 sleep+SIGINT/SIGTERM 优雅退出, 延续 P1-1 零新增依赖(拒绝 apscheduler/httpx/aiosqlite, async 栈留 P1-4); ③【独立进程】python -m backend.worker 与 P1-4 FastAPI 解耦; ④【触发边界】重算只在 newly_finished>0 时触发(P1-1 冷启动/幂等约定), 密集轮询关快照改重算时落(文件数 ≤ 完赛场数); ⑤【单实例守卫】pidfile + _pid_alive 防 cron/重启 double-run; ⑥【配置全走 .env】WORKER_DB/POLL_INTERVAL/MC_N/ONESHOT/ALLOW_NETWORK/PIDFILE/SEED, 部署平台 env 优先不覆盖. \n验证: 20 worker 单测(tick 触发/幂等/异常不杀/DB 真相源 + pidfile 5 态[acquire/release/同 PID 重 acquire/别的活 PID 拒绝/死 PID 覆盖] + dotenv 3 态[加载/不覆盖已设/缺失静默] + run_forever max_ticks 退出+每轮重算循环) + 167 全回归(原 Phase0/1 的 147 + worker 20, 零回归) + CLI 端到端: --once 离线采集→12 场翻转→MC 重算 288 行(448ms@n=2000)→夺冠和 1.000→Argentina16.2%/Spain14.9%/Brazil7.0% 与 P1-3 同区间, --dry 冷启动幂等 newly=0 跳过. \n诚实标注: worker 只处理 finished 翻转(赛前/赛后), 不做 live 赛中事件(留 P2-1 付费 API); 备源 fetch_backup=False(不浪费调骨架备源, 留激活); poll 默认 300s 实际部署按赛程密度调(比赛日 60-120s); `python -m unittest discover -s backend` 仍失败(backend/ 无 __init__.py, 非 P1-2 引入, 当前用显式模块列表跑回归, 可选后续加空 __init__ 修). \n产出: backend/{worker.py, test_worker.py} 2 文件 633 行. MC 用 P0-9 生产 κ=20 DC. 调度节奏/poll 频率落地(env 可调); 赛中重算语义(已完赛锁比分→后续概率反映已发生结果)经 CLI 端到端验证. 影响下游: P1-4 FastAPI 只读 DB(matches+tournament_probs), 不触发采集; P1-7 部署 worker 为独立常驻进程(Fly/小 VPS), WORKER_* env 注入."
     },
     {
       "id": "P1-3",
