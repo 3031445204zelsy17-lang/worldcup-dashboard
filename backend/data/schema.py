@@ -217,6 +217,9 @@ def init_db(path: str | Path = DEFAULT_DB, all_tables: bool = False) -> sqlite3.
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL: 读不阻塞写、写不阻塞读 —— worker(写)与 P1-4 API(读)共享本 DB 必需.
+    # DB 级持久属性(设一次后续连接继承); :memory: 下 sqlite 返回 "memory"(不支持, 忽略不报错).
+    conn.execute("PRAGMA journal_mode = WAL")
     for ddl in (ALL_DDL if all_tables else P1_1_DDL):
         conn.execute(ddl)
     conn.commit()

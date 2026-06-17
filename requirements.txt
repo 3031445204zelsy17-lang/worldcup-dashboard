@@ -5,3 +5,8 @@ pandas>=2.1
 requests>=2.31
 matplotlib>=3.8      # Calibration plot
 pyarrow>=15          # Parquet 读写（历史数据分层存储）
+
+# Phase 1: 托管锦标赛（FastAPI 只读端点 + uvicorn）
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27          # TestClient（测试用）
