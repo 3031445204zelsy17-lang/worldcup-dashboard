@@ -17,7 +17,6 @@ export default function TeamDetail() {
   if (!data) return null
 
   const winProb = data.advancement_path.find((s) => s.round === 'win')?.prob ?? 0
-  const advancement = data.advancement_path.reduce((acc, s) => { acc[s.round] = s.prob; return acc }, {})
 
   return (
     <div className="space-y-4">
@@ -40,7 +39,7 @@ export default function TeamDetail() {
       <section className="bg-white rounded-xl border border-slate-200 p-4">
         <h2 className="font-bold text-slate-900 mb-1">晋级阶梯</h2>
         <p className="text-xs text-slate-500 mb-2">各轮晋级概率(Monte Carlo 10000 次模拟)</p>
-        <AdvancementLadder advancement={advancement} winProb={winProb} />
+        <AdvancementLadder steps={data.advancement_path} />
       </section>
 
       <section className="bg-white rounded-xl border border-slate-200 p-4">

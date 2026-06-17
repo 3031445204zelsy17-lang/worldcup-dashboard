@@ -39,6 +39,9 @@ export default function Overview() {
             ))}
           </div>
         </div>
+        <p className="text-[11px] text-slate-400 mb-2 -mt-1">
+          百分比后的 ± 为 95% 置信区间(Monte Carlo 10000 次抽样不确定性, 越窄越确定)
+        </p>
         {tournament.loading ? <Spinner /> :
          tournament.error ? <ErrorState message="锦标赛数据加载失败" /> :
          <PowerRanking teams={tournament.data.teams} view={view} />}
@@ -57,7 +60,7 @@ export default function Overview() {
       <section className="bg-white rounded-xl border border-slate-200 p-4">
         <h2 className="font-bold text-slate-900 mb-2">今日变动</h2>
         <div className="text-sm text-slate-400 italic">
-          概率变动追踪留 P1-6(需历史快照)。当前最近重算:
+          概率变动追踪留后续阶段（需 worker 存历史快照）。当前最近重算:
           {' '}{health.data?.last_mc_recomputed_at || '—'}
         </div>
       </section>
@@ -94,9 +97,17 @@ function PowerRanking({ teams, view }) {
             <ProbabilityBar value={t.sort_value} height="h-3"
               color={view === 'win' ? 'bg-rose-500' : 'bg-indigo-500'} rightText="" />
           </div>
-          <span className="w-14 text-right text-sm tabular-nums font-semibold text-slate-800">
-            {(t.sort_value * 100).toFixed(1)}%
-          </span>
+          <div className="w-20 text-right shrink-0">
+            <span className="text-sm tabular-nums font-semibold text-slate-800">
+              {(t.sort_value * 100).toFixed(1)}%
+            </span>
+            {t.ci_high != null && (
+              <span className="text-[10px] tabular-nums text-slate-400 ml-0.5 hidden sm:inline"
+                title="95% 置信区间(Monte Carlo 抽样不确定性)">
+                ±{((t.ci_high - t.sort_value) * 100).toFixed(1)}
+              </span>
+            )}
+          </div>
           {view !== 'win' && (
             <span className="w-16 text-right text-xs tabular-nums text-slate-400 hidden sm:inline">
               夺冠 {(t.win_prob * 100).toFixed(1)}%

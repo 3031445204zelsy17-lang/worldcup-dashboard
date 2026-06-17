@@ -54,6 +54,8 @@ class TournamentTeam(BaseModel):
     win_prob: float
     advancement: Advancement
     sort_value: float          # 当前 view 下的排序值(前端高亮用)
+    ci_low: float | None = None    # sort_value 的 95% Wilson 区间下界(MC 抽样不确定性)
+    ci_high: float | None = None
 
 
 class TournamentResponse(BaseModel):
@@ -63,9 +65,11 @@ class TournamentResponse(BaseModel):
 
 
 class StepItem(BaseModel):
-    """晋级阶梯一格."""
+    """晋级阶梯一格(含 95% Wilson 置信区间)."""
     round: str
     prob: float
+    ci_low: float
+    ci_high: float
     label: str
 
 
@@ -113,7 +117,7 @@ class Score(BaseModel):
 
 
 class Drivers(BaseModel):
-    """驱动因素(P1 阶段多数字段空 → null + data_status)."""
+    """驱动因素(P1-6: elo + DC 攻防参数就绪; altitude/weather/injuries 留 P2 → null)."""
     home_elo: float | None = None
     away_elo: float | None = None
     elo_gap: float | None = None
@@ -124,6 +128,21 @@ class Drivers(BaseModel):
     injuries: dict | None = None
     recent_form: float | None = None
     elo_gap_vs_avg: float | None = None
+    # DC 攻防参数(λ 可解释; 比赛用 home_/away_, 球队用单值)
+    home_attack: float | None = None
+    home_defense: float | None = None
+    away_attack: float | None = None
+    away_defense: float | None = None
+    home_attack_rank: int | None = None
+    home_defense_rank: int | None = None
+    away_attack_rank: int | None = None
+    away_defense_rank: int | None = None
+    attack: float | None = None
+    defense: float | None = None
+    attack_rank: int | None = None
+    defense_rank: int | None = None
+    global_mu: float | None = None
+    global_gamma: float | None = None
     data_status: str = "pending"
 
 

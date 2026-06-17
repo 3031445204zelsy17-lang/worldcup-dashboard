@@ -133,6 +133,11 @@ class TestApi(unittest.TestCase):
         self.assertIn("Spain", names)
         self.assertIn("Argentina", names)
         self.assertLess(names.index("Argentina"), names.index("Spain"))  # 0.16>0.14
+        # P1-6: 每队带当前 view 的 95% Wilson CI
+        t0 = b["teams"][0]
+        self.assertIsNotNone(t0["ci_low"])
+        self.assertLessEqual(t0["ci_low"], t0["sort_value"])
+        self.assertGreaterEqual(t0["ci_high"], t0["sort_value"])
 
     def test_tournament_view_ro16_switch(self):
         b = self.client.get("/api/tournament?view=ro16").json()
@@ -149,6 +154,10 @@ class TestApi(unittest.TestCase):
         rounds = [s["round"] for s in b["advancement_path"]]
         self.assertEqual(rounds, ["group", "ro32", "ro16", "qf", "sf", "final", "win"])
         self.assertAlmostEqual(b["advancement_path"][-1]["prob"], 0.14)
+        # P1-6: 每格带 CI, 区间包含点估计
+        for step in b["advancement_path"]:
+            self.assertLessEqual(step["ci_low"], step["prob"])
+            self.assertGreaterEqual(step["ci_high"], step["prob"])
         self.assertTrue(all(m["home"] == "Spain" or m["away"] == "Spain" for m in b["matches"]))
         self.assertEqual(b["drivers"]["data_status"], "pending")
 

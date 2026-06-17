@@ -24,11 +24,14 @@ def tournament(view: str = "win",
     out = []
     for t in teams:
         adv = t["advancement"]
+        sv = queries.sort_value(t, view)
+        ci_low, ci_high = queries.wilson_interval(sv)   # 当前 view 排序值的 95% 区间
         out.append({
             "name": t["name"], "group": t["group"], "elo": t["elo"],
             "win_prob": t["win_prob"],
             "advancement": {r: adv.get(r, 0.0) for r in queries.ROUNDS},
-            "sort_value": queries.sort_value(t, view),
+            "sort_value": sv,
+            "ci_low": ci_low, "ci_high": ci_high,
         })
     out.sort(key=lambda x: x["sort_value"], reverse=True)
     return {"view": view, "last_recomputed_at": last, "teams": out}
