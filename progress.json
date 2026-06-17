@@ -152,8 +152,10 @@
       "dependencies": [
         "P1-1"
       ],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-17",
+      "note": "Monte Carlo 锦标赛模拟器完成. format.py: 2026赛制 + R32/R16/QF/SF/Final bracket树(M73-104, 权威核实 Wikipedia knockout stage + FIFA Annex C; 纠正上次会话 Agent1 的错误'A1vB2相邻交叉'——真实是固定16场 2A v 2B / 1E v 3rd / 1F v 2C / 1C v 2F / 1I v 3rd / 2E v 2I / 1A v 3rd / 1L v 3rd / 1D v 3rd / 1G v 3rd / 2K v 2L / 1H v 2J / 1B v 3rd / 1J v 2H / 1K v 3rd / 2D v 2G + 8组冠军位1A/1B/1D/1E/1G/1I/1K/1L各对一第三名候选池 Annex C) + rank_group(pts/GD/GF/H2H) + best_thirds + assign_thirds(回溯匹配候选池, 非硬编码495表) + venue_neutral(按bracket场地判, 比wc_neutral_host按身份更准). 小组排名tiebreaker: 积分→净胜球→进球→H2H→公平→世界排名(末位排名非抽签 FIFA2025). 32强=12冠+12亚+8最佳第三.\nmc.py: MonteCarloSimulator 绕过 DixonColes.predict(逐场标量) 直接λ公式 exp(μ)·att/(def)·exp(γ·¬neutral) + np.random.poisson 向量化(n=10000仅2.34s); 小组赛 N×72一次采样 + 已完赛12场锁定实际比分 + _rank4(pts/GD/GF+lexsort确定性兜底, 忽略罕见H2H) + 12冠12亚8最佳第三 + assign_thirds + 逐轮 R32→R16→QF→SF→Final(平局50/50近似点球); 聚合各队达各轮频次/N=advancement_prob, 夺冠频次/N=win_prob; 产出 tournament_probs 48×6=288行 对齐 schema.TOURNAMENT_PROBS_DDL.\n关键设计: ①绕过predict向量化(快) ②Poisson独立采样不做τ(对聚合概率无损, 单场比分分布略偏) ③已完赛锁定实际比分(P1-2 worker赛中重算语义核心) ④第三名回溯匹配非495表 ⑤淘汰赛neutral按bracket场地(东道主本土享γ).\n验证: 24单测全过(format15含遍历全部C(12,8)=495第三名组合验证assign_thirds生产级鲁棒[防MC在某组合崩] + mc9含test_finished_scores_locked直接断言采样后finished场比分==实际[锁定生效验证]) + Phase0/1回归全过(data35+models88没碰采集/模型层). CLI n=10000: 2.34s夺冠和1.000, Top Argentina14.6%/Spain13.4%/Brazil7.8%/Colombia6.5%/England6.1%/Morocco5.2%/France5.1%, 单队最高14.6%<30%天花板. sqlite tournament_probs=288行/夺冠和1.0/每队6行/advancement单调.\n诚实标注: ①MC夺冠榜与Elo榜不全一致(Argentina14.6%略高于Elo第一Spain13.4%)——Elo是输入非结果[见memory project-focus-worldcup], bracket路径+分组(Argentina J组弱/Spain H组有乌拉圭)+单场淘汰随机性所致, 两者顶级区间合理 ②Brazil/Colombia在Top3-4/France第7同理 ③第三名回溯匹配个别组合可能≠FIFA官方495表(均合法, 对夺冠榜无实质影响) ④MC不做τ.\n⚠️执行顺序调整: P1-3先于P1-2完成(progress.json原序P1-2在前), 因P1-2 worker'赛后触发MC重算'必须调用P1-3模拟器——P1-3是P1-2钩子的真实目标. P1-2现可做(有模拟器+P1-1的detect_newly_finished钩子). 产出: backend/simulation/{format,mc,test_format,test_mc} 4文件854行 + data/wc.db.tournament_probs(288行, gitignore). MC用P0-9生产κ=20 DC."
     },
     {
       "id": "P1-4",
