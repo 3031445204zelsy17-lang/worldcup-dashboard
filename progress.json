@@ -180,8 +180,10 @@
       "dependencies": [
         "P1-4"
       ],
-      "passes": false,
-      "assignee": "Claude"
+      "passes": true,
+      "assignee": "Claude",
+      "completed_at": "2026-06-17",
+      "note": "前端骨架 + 4 页面完成, 对接 P1-4 的 7 API 端点, 浏览器真实数据验收 4 页全通. \nfrontend/ 新建(原空): package.json/vite.config(dev proxy /api→8001)/tailwind.config(浅色专业: slate 底 + indigo/emerald/amber/rose 数据色)/postcss/index.html + src/main.jsx(BrowserRouter+4 Route)/App.jsx(NavBar+Outlet+footer)/index.css/api.js(fetchJson+API_BASE)/hooks.js(useApi)/data/flags.js(48 队→ISO2 flagcdn) + components/{NavBar,Spinner,ErrorState,ProbabilityBar,TeamFlag,AdvancementLadder,CalibrationChart,DriversPanel}.jsx + pages/{Overview,TeamDetail,MatchDetail,Methodology}.jsx. \n4 页 × 7 端点: 总览(GET /api/health 状态条 + /api/tournament?view= 夺冠榜 48 队视图切换 + /api/matches?date=today 今日 4 场卡片 + 今日变动占位 P1-6); 球队详情(/api/tournament/{team} 实力头 + 晋级阶梯 Recharts BarChart 7 柱 + 赛程 + DriversPanel); 比赛详情(/api/matches/{key} 胜平负三色条 + Top5 比分列表 + λ + 实时曲线留位 P2 + drivers); 方法论(/api/methodology 算法链步骤 + 三变体准确率卡片 + 校准曲线 Recharts LineChart 三变体图例). \n技术栈: Vite5+React18+Router6+Recharts2+Tailwind3; 原生 fetch+useApi hook(不引 SWR/ReactQuery, 4 页够简单); flagcdn.com 国旗(48 队 ISO2 手动 dict, 含 gb-eng/gb-sct subnational, 零 npm 依赖); dev proxy /api→127.0.0.1:8001(本机 8000 被智企通 API 占). Recharts 仅 2 处(晋级阶梯 BarChart + 校准 LineChart), 其余(夺冠榜条/胜平负条/Top 比分)用 Tailwind CSS 条更轻. \n验收中发现并修复关键并发 bug: sqlite3.ProgrammingError 跨线程 —— FastAPI 同步端点跑 anyio 线程池, yield 依赖 get_db 的 setup/端点执行被调度到不同 worker thread, 默认 check_same_thread=True 抛错. ⚠️ TestClient 单线程不暴露(故 P1-4 的 17 单测全过漏检), 真实 uvicorn 并发(前端总览同时打 3 端点)才暴露 → deps.py get_db 加 check_same_thread=False(每请求独立连接 + 请求内串行, 安全). 这是只有真机集成才发现的坑. \n验证: npm run build 通过(847 模块, dist 产出; ⚠️ Recharts 致 bundle 569KB/166KB gzip, code-split 留 P3) + 184 全回归零回归(check_same_thread 修复不破坏 17 API 单测) + 浏览器 Playwright 真实数据验收 4 页全渲染(总览 48 队 Argentina14.6%…/球队 Argentina 晋级阶梯决赛 22.4%/比赛 Portugal 62%·Top1 比分 1-0=13.2%/方法论 三变体 + 校准曲线) + 截图存档(wc_overview/team_detail/match_detail/methodology.png). \n范围推迟(占位降级): 今日变动 diff(MC save 无历史快照 → P1-6, 前端显示'概率已于 HH:MM 更新'); bracket 对阵树(martj42 无淘汰赛 stage → 占位'待赛程确定'); 实时胜率曲线(P2, 比赛详情留虚线位). \n诚实标注: React Router v6 future flag 警告(v7 迁移留 P3, 无害); vite 5173 被占自动 5174(部署配 PORT). 产出 25 新文件 3793 行 + deps.py 5 行修复. 影响下游: P1-6 透明度层(今日变动 + 置信区间 + 模型依据展开, 前端已留 DriversPanel 展开钩子); P1-7 部署前端 npm run build → 静态托管(Vercel/CF), API 同域反代或 VITE_API_BASE."
     },
     {
       "id": "P1-6",
