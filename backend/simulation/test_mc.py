@@ -81,6 +81,35 @@ class TestMonteCarlo(unittest.TestCase):
             self.assertTrue((hg[i, fin] == sim._gacth[fin]).all(), "finished home 比分未锁定")
             self.assertTrue((ag[i, fin] == sim._gacta[fin]).all(), "finished away 比分未锁定")
 
+    def test_extra_time_lambda_fraction_sane(self):
+        # 加时 λ 衰减常量: 30min/90min = 1/3, 在 (0,1)
+        from backend.simulation.mc import EXTRA_TIME_LAMBDA_FRACTION
+        self.assertGreater(EXTRA_TIME_LAMBDA_FRACTION, 0)
+        self.assertLess(EXTRA_TIME_LAMBDA_FRACTION, 1)
+        self.assertAlmostEqual(EXTRA_TIME_LAMBDA_FRACTION, 1 / 3, places=2)
+
+    def test_knockout_non_draw_returns_winner(self):
+        # 常规时间分出胜负 → 直接返回胜者(不进加时)
+        import numpy as np
+        sim = MonteCarloSimulator(seed=42)
+        spain = sim.team_idx["Spain"]; canada = sim.team_idx["Canada"]
+        h = np.array([spain]); a = np.array([canada]); neu = np.array([True])
+        self.assertEqual(sim._decide_knockout_winners(h, a, np.array([2]), np.array([1]), neu)[0], spain)
+        self.assertEqual(sim._decide_knockout_winners(h, a, np.array([0]), np.array([3]), neu)[0], canada)
+
+    def test_knockout_draw_favors_strong_team(self):
+        # 90min 平局 → 30min 加时(实力仍有效): 强队 Spain 加时胜率应显著 > 50%.
+        # 旧版平局直接翻硬币 → 会 ≈50%; 加时版让强队在加时继续占优. 这是本次修正的核心验证.
+        import numpy as np
+        sim = MonteCarloSimulator(seed=7)
+        spain = sim.team_idx["Spain"]; canada = sim.team_idx["Canada"]   # Elo 2205 vs 1875
+        h = np.array([spain]); a = np.array([canada]); neu = np.array([True])
+        wins = sum(1 for _ in range(3000)
+                   if sim._decide_knockout_winners(h, a, np.array([1]), np.array([1]), neu)[0] == spain)
+        rate = wins / 3000
+        self.assertGreater(rate, 0.60,
+                           f"Spain 平局后加时胜率仅 {rate:.1%}, 未显著 > 50% → 平局处理可能仍是纯翻硬币")
+
 
 if __name__ == "__main__":
     unittest.main()
