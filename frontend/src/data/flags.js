@@ -1,5 +1,5 @@
-// 48 队 martj42 全称 → ISO2(flagcdn.com). 含 subnational: England=gb-eng, Scotland=gb-sct
-// flagcdn 支持这些代码(https://flagcdn.com/h40/gb-eng.webp)
+// 48 队 martj42 全称 → ISO2(给本地 flag-icons CSS sprite 用). 含 subnational: England=gb-eng, Scotland=gb-sct
+// flag-icons 的 SVG 打包进 bundle(本地, 不依赖外网 flagcdn), 代理/离线友好.
 export const TEAM_TO_ISO = {
   Spain: 'es', Argentina: 'ar', France: 'fr', England: 'gb-eng',
   Colombia: 'co', Brazil: 'br', Portugal: 'pt', Germany: 'de',
@@ -13,9 +13,4 @@ export const TEAM_TO_ISO = {
   'DR Congo': 'cd', Iraq: 'iq', 'New Zealand': 'nz', 'Saudi Arabia': 'sa',
   Tunisia: 'tn', 'Bosnia and Herzegovina': 'ba', Haiti: 'ht', 'South Africa': 'za',
   'Cape Verde': 'cv', Ghana: 'gh', Qatar: 'qa', Curaçao: 'cw',
-}
-
-export function flagUrl(team, h = 40) {
-  const iso = TEAM_TO_ISO[team]
-  return iso ? `https://flagcdn.com/h${h}/${iso}.webp` : null
 }
