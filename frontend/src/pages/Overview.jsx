@@ -9,7 +9,7 @@ import TeamFlag from '../components/TeamFlag.jsx'
 
 const VIEWS = [
   { key: 'win', label: '夺冠' },
-  { key: 'group', label: '出线' },
+  { key: 'ro32', label: '出线' },
   { key: 'ro16', label: '16 强' },
   { key: 'qf', label: '8 强' },
   { key: 'sf', label: '4 强' },

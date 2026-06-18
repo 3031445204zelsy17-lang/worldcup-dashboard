@@ -73,9 +73,9 @@ class TestAdvancementPathCI(unittest.TestCase):
                                 "qf": 0.3, "sf": 0.15, "final": 0.08},
                 "win_prob": 0.05}
 
-    def test_seven_steps_each_with_ci(self):
+    def test_steps_each_with_ci(self):
         path = q.advancement_path(self._probs())
-        self.assertEqual(len(path), 7)
+        self.assertEqual(len(path), 6)   # 5 轮(ro32→final) + 夺冠; group 占位(100%)跳过
         for step in path:
             self.assertIn("ci_low", step)
             self.assertIn("ci_high", step)

@@ -152,7 +152,7 @@ class TestApi(unittest.TestCase):
         b = self.client.get("/api/tournament/Spain").json()
         self.assertEqual(b["name"], "Spain")
         rounds = [s["round"] for s in b["advancement_path"]]
-        self.assertEqual(rounds, ["group", "ro32", "ro16", "qf", "sf", "final", "win"])
+        self.assertEqual(rounds, ["ro32", "ro16", "qf", "sf", "final", "win"])
         self.assertAlmostEqual(b["advancement_path"][-1]["prob"], 0.14)
         # P1-6: 每格带 CI, 区间包含点估计
         for step in b["advancement_path"]:

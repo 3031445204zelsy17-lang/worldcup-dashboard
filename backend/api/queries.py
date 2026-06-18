@@ -20,8 +20,8 @@ DC_PARQUET = ROOT / "data" / "processed" / "dixon_coles_current.parquet"
 DC_JSON = ROOT / "data" / "processed" / "dixon_coles_global.json"
 
 ROUNDS = ("group", "ro32", "ro16", "qf", "sf", "final")
-ROUND_LABELS = {  # 晋级阶梯中文标签(前端展示)
-    "group": "小组出线", "ro32": "32强", "ro16": "16强",
+ROUND_LABELS = {  # 晋级阶梯中文标签(前端展示); group=100% 占位不展示, ro32=小组出线(进32强)
+    "group": "小组赛", "ro32": "小组出线", "ro16": "16强",
     "qf": "8强", "sf": "半决赛", "final": "决赛", "win": "夺冠",
 }
 
@@ -176,6 +176,8 @@ def advancement_path(probs: dict) -> list[dict]:
     adv = probs["advancement"]
     path = []
     for r in ROUNDS:
+        if r == "group":
+            continue   # group=1.0 占位(参赛即在小组赛, 必然 100%, 无信息), 不展示
         p = adv.get(r, 0.0)
         lo, hi = wilson_interval(p)
         path.append({"round": r, "prob": p, "ci_low": lo, "ci_high": hi, "label": ROUND_LABELS[r]})
