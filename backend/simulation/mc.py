@@ -325,18 +325,26 @@ class MonteCarloSimulator:
         return df.sort_values(["team", "round"]).reset_index(drop=True)
 
     def save(self, conn: sqlite3.Connection, df: pd.DataFrame) -> int:
-        """写 tournament_probs 表(清旧后重写). 返回写入行数."""
+        """写 tournament_probs(覆盖=最新) + tournament_probs_history(追加=历史轨迹).
+
+        同一次重算的 48×6 行共用 calculated_at(快照分组键). 返回写入 tournament_probs 行数.
+        """
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        conn.execute("DELETE FROM tournament_probs")
         rows = []
         for r in df.itertuples(index=False):
             tid = team_id_of(conn, r.team)
             if tid is None:
                 continue
             rows.append((tid, r.round, float(r.advancement_prob), float(r.win_prob), now))
+        # tournament_probs: 覆盖(最新一份, 查询层读它)
+        conn.execute("DELETE FROM tournament_probs")
         conn.executemany(
             "INSERT INTO tournament_probs (team_id, round, advancement_prob, win_prob, calculated_at) "
+            "VALUES (?,?,?,?,?)", rows)
+        # tournament_probs_history: 追加(累积历史轨迹, 每次 MC 重算一份快照, 只 INSERT 不 DELETE)
+        conn.executemany(
+            "INSERT INTO tournament_probs_history (team_id, round, advancement_prob, win_prob, calculated_at) "
             "VALUES (?,?,?,?,?)", rows)
         conn.commit()
         return len(rows)

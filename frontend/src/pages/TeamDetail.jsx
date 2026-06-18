@@ -5,6 +5,7 @@ import Spinner from '../components/Spinner.jsx'
 import ErrorState from '../components/ErrorState.jsx'
 import TeamFlag from '../components/TeamFlag.jsx'
 import AdvancementLadder from '../components/AdvancementLadder.jsx'
+import ProbabilityTrajectory from '../components/ProbabilityTrajectory.jsx'
 import DriversPanel from '../components/DriversPanel.jsx'
 
 export default function TeamDetail() {
@@ -40,6 +41,14 @@ export default function TeamDetail() {
         <h2 className="font-bold text-slate-900 mb-1">晋级阶梯</h2>
         <p className="text-xs text-slate-500 mb-2">各轮晋级概率(Monte Carlo 10000 次模拟)</p>
         <AdvancementLadder steps={data.advancement_path} />
+      </section>
+
+      <section className="bg-white rounded-xl border border-slate-200 p-4">
+        <h2 className="font-bold text-slate-900 mb-1">概率轨迹</h2>
+        <p className="text-xs text-slate-500 mb-2">
+          夺冠 / 出线 / 8 强概率随赛果的变动(每次 MC 重算一个点)
+        </p>
+        <ProbabilityTrajectory team={data.name} />
       </section>
 
       <section className="bg-white rounded-xl border border-slate-200 p-4">

@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 import sqlite3  # noqa: E402
 
 from backend.api import queries as q  # noqa: E402
-from backend.data.schema import Match, Status, init_db, seed_teams  # noqa: E402
+from backend.data.schema import Match, Status, init_db, seed_teams, team_id_of  # noqa: E402
 
 
 # ============================================================
@@ -161,6 +161,80 @@ class TestBacktestLimitations(unittest.TestCase):
         # 三变体每个都该有 accuracy/brier
         for v in ("elo", "dc", "dcs"):
             self.assertIn("accuracy", bs["per_year"]["2018"][v])
+
+
+# ============================================================
+# P1-6+: 概率历史轨迹(mc.save 写两表 + team_history 时间序聚合)
+# ============================================================
+class TestProbabilityHistory(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        fd, cls.dbpath = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(cls.dbpath)
+        cls.conn = init_db(cls.dbpath, all_tables=True)   # 含 tournament_probs_history + 索引
+        seed_teams(cls.conn)
+        try:
+            from backend.simulation.mc import MonteCarloSimulator
+            cls.sim = MonteCarloSimulator(seed=42)
+            cls.ok = True
+        except Exception:
+            cls.sim = None
+            cls.ok = False
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.conn.close()
+        Path(cls.dbpath).unlink(missing_ok=True)
+
+    def setUp(self):
+        if not self.ok:
+            self.skipTest("DC artifacts 未加载")
+
+    def test_history_table_created(self):
+        # init_db(all_tables) 应建 history 表 + 索引
+        tabs = {r[0] for r in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        self.assertIn("tournament_probs_history", tabs)
+
+    def test_save_writes_both_tables_and_accumulates(self):
+        """mc.save: tournament_probs 覆盖(288); history 追加累积(每次 +288)."""
+        probs = self.sim.run(n=50)
+        df = self.sim.to_dataframe(probs)
+        self.sim.save(self.conn, df)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tournament_probs").fetchone()[0], 288)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tournament_probs_history").fetchone()[0], 288)
+        # 再 save → tournament_probs 仍 288(覆盖), history 翻倍(累积)
+        self.sim.save(self.conn, df)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tournament_probs").fetchone()[0], 288)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tournament_probs_history").fetchone()[0], 576)
+
+    def test_team_history_time_series_aggregation(self):
+        """team_history: 按 calculated_at 聚合成快照序列, 升序, 含 win + 各轮 advancement."""
+        # 清掉上面 test 的 history, 灌 3 个不同时间点的快照(模拟概率随赛果变动)
+        self.conn.execute("DELETE FROM tournament_probs_history")
+        tid = team_id_of(self.conn, "Spain")
+        timestamps = ["2026-06-11T00:00:00+00:00",
+                      "2026-06-14T00:00:00+00:00",
+                      "2026-06-18T00:00:00+00:00"]
+        for i, ts in enumerate(timestamps):
+            win = 0.10 + i * 0.02              # 模拟夺冠概率随赛果上升
+            for rnd in ("group", "ro32", "ro16", "qf", "sf", "final"):
+                self.conn.execute(
+                    "INSERT INTO tournament_probs_history "
+                    "(team_id, round, advancement_prob, win_prob, calculated_at) VALUES (?,?,?,?,?)",
+                    (tid, rnd, 0.5 - i * 0.05, win, ts))
+        self.conn.commit()
+
+        snaps = q.team_history(self.conn, "Spain")
+        self.assertEqual(len(snaps), 3)                                   # 3 快照(非 18 行)
+        self.assertEqual([s["calculated_at"] for s in snaps], timestamps)  # 升序
+        self.assertAlmostEqual(snaps[0]["win_prob"], 0.10)
+        self.assertAlmostEqual(snaps[2]["win_prob"], 0.14)                # 变动可读
+        self.assertEqual(snaps[0]["advancement"]["ro32"], 0.5)
+
+    def test_team_history_unknown_team_empty(self):
+        self.assertEqual(q.team_history(self.conn, "NoSuchTeam"), [])
 
 
 if __name__ == "__main__":

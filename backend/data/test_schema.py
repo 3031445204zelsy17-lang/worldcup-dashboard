@@ -29,17 +29,18 @@ class TestInitDb(unittest.TestCase):
         self.assertEqual(self._user_tables(conn), {"teams", "matches"})
         conn.close()
 
-    def test_all_tables_builds_seven(self):
+    def test_all_tables_builds_all(self):
         conn = init_db(":memory:", all_tables=True)
         self.assertEqual(self._user_tables(conn),
                          {"teams", "matches", "events", "predictions",
-                          "tournament_probs", "lineups", "injuries"})
+                          "tournament_probs", "tournament_probs_history",
+                          "lineups", "injuries"})
         conn.close()
 
-    def test_ddl_single_source_has_seven(self):
-        # DDL 真相源: P1_1 两张 + 其余五张 = 7
+    def test_ddl_single_source(self):
+        # DDL 真相源: P1_1 两张 + 其余六张(含 history 轨迹) = 8 张表
         self.assertEqual(len(P1_1_DDL), 2)
-        self.assertEqual(len(ALL_DDL), 7)
+        self.assertEqual(len(ALL_DDL), 8)
 
 
 class TestSeedTeams(unittest.TestCase):

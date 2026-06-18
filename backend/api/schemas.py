@@ -163,6 +163,18 @@ class TeamDetailResponse(BaseModel):
     drivers: Drivers
 
 
+class HistorySnapshot(BaseModel):
+    """一次 MC 重算快照(该队在那一刻的夺冠 + 各轮晋级概率)."""
+    calculated_at: str
+    win_prob: float
+    advancement: dict
+
+
+class HistoryResponse(BaseModel):
+    team: str
+    snapshots: list[HistorySnapshot]
+
+
 # ---------------- 方法论 ----------------
 class MethodologyResponse(BaseModel):
     algorithm_chain: list[str]

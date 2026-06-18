@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.api import queries
 from backend.api.deps import get_db
-from backend.api.schemas import TournamentResponse, TeamDetailResponse
+from backend.api.schemas import TournamentResponse, TeamDetailResponse, HistoryResponse
 
 router = APIRouter(tags=["tournament"])
 
@@ -54,3 +54,12 @@ def team_detail(team: str,
         "matches": [queries.match_to_summary(m) for m in matches],
         "drivers": queries.team_drivers(conn, team),
     }
+
+
+@router.get("/api/tournament/{team}/history", response_model=HistoryResponse)
+def team_history_api(team: str,
+                     conn: sqlite3.Connection = Depends(get_db)) -> dict:
+    """单队概率历史轨迹(每次 MC 重算一份快照). 前端画「概率轨迹」折线."""
+    if queries.team_row(conn, team) is None:
+        raise HTTPException(404, f"未知队: {team}")
+    return {"team": team, "snapshots": queries.team_history(conn, team)}

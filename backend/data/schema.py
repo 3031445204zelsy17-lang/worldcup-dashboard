@@ -103,6 +103,23 @@ CREATE TABLE IF NOT EXISTS tournament_probs (
 )
 """
 
+# 历史轨迹: 每次 MC 重算追加一份快照(只 INSERT 不 DELETE), 供「概率轨迹」折线 +
+# 「今日变动」diff. 同一次重算的 48×6 行共用 calculated_at(快照分组键).
+TOURNAMENT_PROBS_HISTORY_DDL = """
+CREATE TABLE IF NOT EXISTS tournament_probs_history (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id          INTEGER REFERENCES teams(id),
+    round            TEXT,       -- group/ro16/qf/sf/final
+    advancement_prob REAL,
+    win_prob         REAL,
+    calculated_at    TIMESTAMP
+)
+"""
+TP_HISTORY_INDEX_DDL = """
+CREATE INDEX IF NOT EXISTS idx_tph_team_time
+ON tournament_probs_history(team_id, calculated_at)
+"""
+
 LINEUPS_DDL = """
 CREATE TABLE IF NOT EXISTS lineups (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,10 +140,11 @@ CREATE TABLE IF NOT EXISTS injuries (
 )
 """
 
-# P1-1 采集层建这两张; 全部 7 表交给 P1-4
+# P1-1 采集层建这两张; 全部表(含 history 轨迹)交给 P1-4; 索引在 init_db 单独建(非表)
 P1_1_DDL = (TEAMS_DDL, MATCHES_DDL)
 ALL_DDL = (TEAMS_DDL, MATCHES_DDL, EVENTS_DDL, PREDICTIONS_DDL,
-           TOURNAMENT_PROBS_DDL, LINEUPS_DDL, INJURIES_DDL)
+           TOURNAMENT_PROBS_DDL, TOURNAMENT_PROBS_HISTORY_DDL,
+           LINEUPS_DDL, INJURIES_DDL)
 
 
 # ============================================================
@@ -222,6 +240,8 @@ def init_db(path: str | Path = DEFAULT_DB, all_tables: bool = False) -> sqlite3.
     conn.execute("PRAGMA journal_mode = WAL")
     for ddl in (ALL_DDL if all_tables else P1_1_DDL):
         conn.execute(ddl)
+    if all_tables:
+        conn.execute(TP_HISTORY_INDEX_DDL)   # history 轨迹索引(非表, 单独建)
     conn.commit()
     return conn
 

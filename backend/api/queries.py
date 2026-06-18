@@ -151,6 +151,26 @@ def team_probs(conn: sqlite3.Connection, name: str) -> dict | None:
     return {"advancement": {r[0]: float(r[1]) for r in rows}, "win_prob": float(rows[0][2])}
 
 
+def team_history(conn: sqlite3.Connection, name: str, limit: int = 200) -> list[dict]:
+    """单队概率历史轨迹: 每次 MC 重算一份快照, 按 calculated_at 升序.
+
+    返回 [{calculated_at, win_prob, advancement:{round:prob}}, ...]. 无历史 → [].
+    limit 截最近 N 份(防极长赛期轨迹过长).
+    """
+    rows = conn.execute(
+        """SELECT tph.calculated_at, tph.round, tph.advancement_prob, tph.win_prob
+           FROM tournament_probs_history tph JOIN teams t ON t.id = tph.team_id
+           WHERE t.name=? ORDER BY tph.calculated_at, tph.round""", (name,)).fetchall()
+    if not rows:
+        return []
+    by_ts: dict[str, dict] = {}
+    for ts, rnd, adv, win in rows:
+        snap = by_ts.setdefault(ts, {"calculated_at": ts,
+                                     "win_prob": float(win), "advancement": {}})
+        snap["advancement"][rnd] = float(adv)
+    return list(by_ts.values())[-limit:]
+
+
 def advancement_path(probs: dict) -> list[dict]:
     """probs → 晋级阶梯 7 格(6 轮 + 夺冠), 每格带 95% Wilson 置信区间(MC 抽样不确定性)."""
     adv = probs["advancement"]
