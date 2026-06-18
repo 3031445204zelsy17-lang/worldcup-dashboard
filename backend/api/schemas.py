@@ -56,6 +56,7 @@ class TournamentTeam(BaseModel):
     sort_value: float          # 当前 view 下的排序值(前端高亮用)
     ci_low: float | None = None    # sort_value 的 95% Wilson 区间下界(MC 抽样不确定性)
     ci_high: float | None = None
+    diff: float | None = None      # 最近一场赛果导致的变化(pp, 正=涨/负=跌); None=无历史可算
 
 
 class TournamentResponse(BaseModel):

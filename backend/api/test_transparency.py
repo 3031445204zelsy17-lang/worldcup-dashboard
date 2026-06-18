@@ -237,5 +237,48 @@ class TestProbabilityHistory(unittest.TestCase):
         self.assertEqual(q.team_history(self.conn, "NoSuchTeam"), [])
 
 
+# ============================================================
+# P1-6++: 榜单涨跌标志(snapshot_diff = 最新两份快照的差)
+# ============================================================
+class TestSnapshotDiff(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        fd, cls.dbpath = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(cls.dbpath)
+        cls.conn = init_db(cls.dbpath, all_tables=True)
+        seed_teams(cls.conn)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.conn.close()
+        Path(cls.dbpath).unlink(missing_ok=True)
+
+    def setUp(self):
+        self.conn.execute("DELETE FROM tournament_probs_history")
+        self.conn.commit()
+
+    def _seed_snapshot(self, team, ts, win, adv=0.5):
+        tid = team_id_of(self.conn, team)
+        for rnd in ("group", "ro32", "ro16", "qf", "sf", "final"):
+            self.conn.execute(
+                "INSERT INTO tournament_probs_history "
+                "(team_id, round, advancement_prob, win_prob, calculated_at) VALUES (?,?,?,?,?)",
+                (tid, rnd, adv, win, ts))
+        self.conn.commit()
+
+    def test_diff_latest_vs_prev(self):
+        self._seed_snapshot("Spain", "2026-06-17T00:00:00+00:00", 0.10, adv=0.50)
+        self._seed_snapshot("Spain", "2026-06-18T00:00:00+00:00", 0.13, adv=0.55)
+        d = q.snapshot_diff(self.conn)
+        self.assertIn("Spain", d)
+        self.assertAlmostEqual(d["Spain"]["win"], 0.03, places=3)      # +3pp
+        self.assertAlmostEqual(d["Spain"]["ro32"], 0.05, places=3)     # adv 0.50→0.55
+
+    def test_diff_empty_with_fewer_than_two_snapshots(self):
+        self._seed_snapshot("Spain", "2026-06-18T00:00:00+00:00", 0.13)
+        self.assertEqual(q.snapshot_diff(self.conn), {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -40,7 +40,7 @@ export default function Overview() {
           </div>
         </div>
         <p className="text-[11px] text-slate-400 mb-2 -mt-1">
-          百分比后的 ± 为 95% 置信区间(Monte Carlo 10000 次抽样不确定性, 越窄越确定)
+          百分比后 ± 为 95% 置信区间 · <span className="text-emerald-600">▲</span><span className="text-rose-500">▼</span> 为最近一场赛果的涨跌(pp)
         </p>
         {tournament.loading ? <Spinner /> :
          tournament.error ? <ErrorState message="锦标赛数据加载失败" /> :
@@ -106,6 +106,16 @@ function PowerRanking({ teams, view }) {
                 title="95% 置信区间(Monte Carlo 抽样不确定性)">
                 ±{((t.ci_high - t.sort_value) * 100).toFixed(1)}
               </span>
+            )}
+          </div>
+          <div className="w-12 text-right shrink-0 text-[11px] tabular-nums hidden sm:block"
+            title="最近一场赛果导致的变化(百分点)">
+            {t.diff != null && Math.abs(t.diff) >= 0.0005 ? (
+              <span className={t.diff > 0 ? 'text-emerald-600 font-medium' : 'text-rose-500 font-medium'}>
+                {t.diff > 0 ? '▲' : '▼'}{Math.abs(t.diff * 100).toFixed(1)}
+              </span>
+            ) : (
+              <span className="text-slate-300">•</span>
             )}
           </div>
           {view !== 'win' && (

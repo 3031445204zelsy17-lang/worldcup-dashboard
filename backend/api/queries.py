@@ -125,8 +125,41 @@ def team_rank(conn: sqlite3.Connection, name: str) -> int | None:
 # ============================================================
 # 锦标赛概率
 # ============================================================
+def snapshot_diff(conn: sqlite3.Connection) -> dict:
+    """最新 vs 上一份 history 快照的每队每轮概率差(= 最近一场赛果的跳动).
+
+    返回 {name: {'win': d, 'ro32': d, 'ro16': d, 'qf': d, 'sf': d, 'final': d}}
+    d 为百分点差(正=上涨). <2 份历史 → {}(无 diff 可算).
+    """
+    ts = [r[0] for r in conn.execute(
+        "SELECT DISTINCT calculated_at FROM tournament_probs_history "
+        "ORDER BY calculated_at DESC LIMIT 2").fetchall()]
+    if len(ts) < 2:
+        return {}
+
+    def load(t):
+        return {(n, r): (a, w) for n, r, a, w in conn.execute(
+            """SELECT t.name, tph.round, tph.advancement_prob, tph.win_prob
+               FROM tournament_probs_history tph JOIN teams t ON t.id = tph.team_id
+               WHERE tph.calculated_at=?""", (t,)).fetchall()}
+    cur, prev = load(ts[0]), load(ts[1])
+    rounds = ("ro32", "ro16", "qf", "sf", "final")
+    diffs = {}
+    for name in {n for (n, _) in cur}:
+        d = {}
+        for r in rounds:
+            if (name, r) in cur and (name, r) in prev:
+                d[r] = cur[(name, r)][0] - prev[(name, r)][0]
+        if (name, "ro32") in cur and (name, "ro32") in prev:
+            d["win"] = cur[(name, "ro32")][1] - prev[(name, "ro32")][1]   # win 同快照同值, 取 ro32 行
+        if d:
+            diffs[name] = d
+    return diffs
+
+
 def tournament_teams(conn: sqlite3.Connection) -> list[dict]:
-    """全部 48 队聚合: 每队 win_prob + 6 轮 advancement(按 elo 降序)."""
+    """全部 48 队聚合: 每队 win_prob + 各轮 advancement(按 elo 降序) + 概率 diff(最近一场)."""
+    diffs = snapshot_diff(conn)
     rows = conn.execute(
         """SELECT t.name, t.group_name, t.elo_rating,
                   tp.round, tp.advancement_prob, tp.win_prob
@@ -137,6 +170,10 @@ def tournament_teams(conn: sqlite3.Connection) -> list[dict]:
         t = by_team.setdefault(name, {"name": name, "group": grp, "elo": elo,
                                       "win_prob": float(win), "advancement": {}})
         t["advancement"][rnd] = float(adv)
+    for name, t in by_team.items():
+        d = diffs.get(name, {})
+        t["win_diff"] = d.get("win")
+        t["advancement_diff"] = {r: d.get(r) for r in ("ro32", "ro16", "qf", "sf", "final")}
     return list(by_team.values())
 
 
