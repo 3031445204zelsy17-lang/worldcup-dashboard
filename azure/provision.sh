@@ -9,7 +9,7 @@ set -euo pipefail
 
 # ============ 占位变量(改这里! ★项必须全局唯一) ============
 RG_NAME="wc2026-rg"
-LOCATION="eastus"                 # 选离你近的; eastus 配额充足
+LOCATION="eastasia"              # 离内地/香港近. ⚠️部署搁置: 学校订阅(FreeTrial) CA 环境【全局配额=1】已被 hkmu-campus-env 占满, 本订阅建不了任何 CA 环境; 需换学生计划订阅才能部署. 详见 progress.json P1-7.
 ACR_NAME="wc2026acr${RANDOM}"     # ★全局唯一, 小写字母数字(加 RANDOM 防撞)
 ACA_ENV="wc2026-env"
 ACA_NAME="wc2026-api"
