@@ -2,6 +2,8 @@
 P1-4 FastAPI app 工厂
 =====================
 - create_app(): 构 FastAPI app + CORS(只放 GET)+ 挂 5 router.
+- 同源 SPA(P1-7): 生产单 Azure 域名, uvicorn 同时 serve API + 前端 dist;
+  dev 无 dist → 纯 API(走 vite dev server 5173 + proxy /api).
 - lifespan: startup 加载 WCPredictor 单例(避免每请求 from_artifacts 读盘);
   DC artifacts 缺失 → app.state.predictor=None(比赛预测端点返 503), 不崩.
 
@@ -13,13 +15,20 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.api.routers import health, matches, methodology, teams, tournament
 
 log = logging.getLogger("wc.api")
+
+# 前端构建产物(生产同源: 单域名 serve API + SPA; dev 无 dist → 纯 API 不报错).
+# app.py 在 backend/api/, parents[2] = 项目根(本地)/ /app(容器)
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -54,4 +63,26 @@ def create_app() -> FastAPI:
     )
     for r in (health.router, teams.router, tournament.router, matches.router, methodology.router):
         app.include_router(r)
+
+    # —— 同源 SPA(P1-7 单 Azure 域名方案): API 在 /api/*, 其余路径 → 前端 ——
+    if FRONTEND_DIST.is_dir():
+        assets_dir = FRONTEND_DIST / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+        # catch-all 必须在所有 API router 之后注册: /api 未匹配 → 真 404;
+        # 根级真实静态文件(favicon/vite.svg 等)直返; 其余客户端路由 → index.html(React Router 接管)
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def _spa_fallback(full_path: str):
+            if full_path.startswith("api"):
+                raise HTTPException(status_code=404, detail="Not found")
+            candidate = FRONTEND_DIST / full_path
+            if full_path and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(FRONTEND_DIST / "index.html")
+
+        log.info("前端已挂载(%s): 同源 SPA 模式", FRONTEND_DIST)
+    else:
+        log.info("无 frontend/dist → 纯 API 模式(dev)")
+
     return app

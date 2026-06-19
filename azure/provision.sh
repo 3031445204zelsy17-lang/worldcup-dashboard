@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # azure/provision.sh — 一次性创建后端全部 Azure 资源
 #
-# 在哪跑: Azure Portal 的 Cloud Shell(Bash)(portal.azure.com → 顶部 ">_" 按钮)。
-#   原因: 你本地 az CLI 走代理 503 连不上 Azure; Cloud Shell 走 Azure 自家网络, 无此问题。
-# 怎么跑: 把本文件内容粘进 Cloud Shell, 先改下面占位变量(★全局唯一项必须改), 再 bash 运行。
+# 在哪跑: 本机(已验证 az CLI 2.87 + containerapp 扩展能联网 Azure). 若本机网络不稳,
+#   退路: Portal Cloud Shell(portal.azure.com → 顶部 ">_"). 两种方式命令完全一样.
+# 怎么跑: 先改下面占位变量(★全局唯一项必须改, 或保持 ${RANDOM} 默认), 再 `bash azure/provision.sh`.
 # 详见 docs/deployment.md。
 set -euo pipefail
 
