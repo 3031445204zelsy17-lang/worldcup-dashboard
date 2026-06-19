@@ -230,7 +230,8 @@
         "P1-8"
       ],
       "passes": false,
-      "assignee": "Claude"
+      "assignee": "Claude",
+      "note": "[6/19 待办汇总] P2 一次性优化输入(详见 memory p2-data-driven-optimizations): events/lineup API 接入设计成支持三用途——(a) xG 重塑比分分布(大比分重尾, count-level NB 已 no-go) (b) lineup→player-impact(伤病/状态) (c) 近期状态校准 Elo 滞后。P1 count-level 已到极限(三轮回测 no-go), 真解在 P2 事件数据。共享数据层一次接入三用途。"
     },
     {
       "id": "P2-2",
