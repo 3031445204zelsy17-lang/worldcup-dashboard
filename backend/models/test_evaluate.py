@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import pandas as pd
 
-from evaluate import reliability, draw_boost_scan, brier_with_draw_boost, recall_by_outcome, prob_col  # noqa: E402
+from evaluate import (reliability, draw_boost_scan, brier_with_draw_boost,  # noqa: E402
+                      recall_by_outcome, prob_col, goal_distribution_calibration, estimate_nb_r)
 
 
 def _df(probs, actuals):
@@ -101,6 +102,44 @@ class TestRecallByOutcome(unittest.TestCase):
         self.assertAlmostEqual(rec["H"], 1.0)
         self.assertAlmostEqual(rec["D"], 1.0)
         self.assertAlmostEqual(rec["A"], 1.0)
+
+
+@unittest.skipUnless(Path("data/processed/backtest_2018_2022.parquet").exists()
+                     and Path("data/processed/dixon_coles_current.parquet").exists(),
+                     "需要 backtest + DC artifacts")
+class TestGoalDistributionCalibration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from dixon_coles import DixonColes
+        cls.df = pd.read_parquet("data/processed/backtest_2018_2022.parquet")
+        cls.dc = DixonColes.from_artifacts(
+            Path("data/processed/dixon_coles_current.parquet"),
+            Path("data/processed/dixon_coles_global.json"))
+        cls.hosts = {2018: {"Russia"}, 2022: {"Qatar"}}
+
+    def test_poisson_mixture_var_mean_above_one(self):
+        res = goal_distribution_calibration(self.df, self.dc, nb_r=0.0, n_samples=5000,
+                                            hosts_by_year=self.hosts)
+        for k in ("actual", "poisson", "nb", "n_teams"):
+            self.assertIn(k, res)
+        # 混合 Poisson(各场 λ 异质) var/mean > 1(λ 异质性导致, 非单场过度离散); 合理范围 < 2
+        self.assertGreater(res["poisson"]["var_mean"], 1.0)
+        self.assertLess(res["poisson"]["var_mean"], 2.0)
+
+    def test_nb_overdispersed(self):
+        # nb_r>0 → NB 混合 var/mean > Poisson 混合(多一层单场过度离散), 大比分 P(≥5) 更高.
+        # (注: WC 128场过度离散弱, actual≈poisson 混合; 故只验证 NB 机制, 量级匹配留 go/no-go)
+        res = goal_distribution_calibration(self.df, self.dc, nb_r=1.875, n_samples=10000,
+                                            hosts_by_year=self.hosts)
+        self.assertGreater(res["nb"]["var_mean"], res["poisson"]["var_mean"],
+                           "NB var/mean 应大于 Poisson(额外单场过度离散)")
+        self.assertGreater(res["nb"]["p_ge5"], res["poisson"]["p_ge5"],
+                           "NB 大比分 P(≥5) 应高于 Poisson(还原尾部)")
+
+    def test_estimate_nb_r_in_range(self):
+        r = estimate_nb_r(self.df, self.dc, hosts_by_year=self.hosts)
+        self.assertGreaterEqual(r, 1.0)
+        self.assertLessEqual(r, 5.0)
 
 
 if __name__ == "__main__":

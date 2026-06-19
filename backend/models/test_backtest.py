@@ -88,6 +88,17 @@ class TestWalkForwardElo(unittest.TestCase):
         # D3 的 A 快照包含了 D2(A vs C) 的结果 → 与 D2 快照不同
         self.assertNotAlmostEqual(snaps[idx_d2]["A"], snaps[idx_d3]["A"], places=4)
 
+    def test_walk_forward_accepts_half_life(self):
+        # half_life 参数被接受; half_life=0 数值 == 默认调用; half_life>0 仍有限值(防泄露不崩)
+        df, bt_mask = self._df_with_backtest()
+        snaps0 = walk_forward_elo(df, bt_mask, half_life=0.0)
+        snaps_default = walk_forward_elo(df, bt_mask)
+        idx = df.index[bt_mask][0]
+        self.assertEqual(snaps0[idx], snaps_default[idx])
+        snaps_decay = walk_forward_elo(df, bt_mask, half_life=730.0)
+        for t in ["A", "B", "C"]:
+            self.assertTrue(np.isfinite(snaps_decay[idx].get(t, 1500.0)))
+
 
 # ============================================================
 # shrunk_variant 正确性

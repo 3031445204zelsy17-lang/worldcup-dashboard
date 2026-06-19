@@ -110,6 +110,16 @@ class TestMonteCarlo(unittest.TestCase):
         self.assertGreater(rate, 0.60,
                            f"Spain 平局后加时胜率仅 {rate:.1%}, 未显著 > 50% → 平局处理可能仍是纯翻硬币")
 
+    def test_nb_sample_goals_overdispersed(self):
+        # nb_r=0 → Poisson(var/mean≈1); nb_r>0 → NB(var/mean>1, 尾部厚). 验证过度离散机制.
+        import numpy as np
+        lam = np.full(20000, 1.5)
+        g0 = MonteCarloSimulator(seed=42)._sample_goals(lam)
+        self.assertAlmostEqual(float(g0.var() / g0.mean()), 1.0, delta=0.08, msg="nb_r=0 应≈Poisson")
+        g_nb = MonteCarloSimulator(seed=42, nb_r=1.875)._sample_goals(lam)
+        self.assertGreater(float(g_nb.var() / g_nb.mean()), 1.3, "nb_r>0 应过度离散 var/mean>1.3")
+        self.assertGreater((g_nb >= 5).mean(), (g0 >= 5).mean(), "NB 大比分频率应高于 Poisson")
+
 
 if __name__ == "__main__":
     unittest.main()

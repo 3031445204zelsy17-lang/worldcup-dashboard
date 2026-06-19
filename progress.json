@@ -2,8 +2,8 @@
   "project": "World Cup Probability Dashboard 2026",
   "deadline": "2026-07-19",
   "repo": "",
-  "last_updated": "2026-06-18",
-  "context": "产品设计阶段完成（见 docs/）。开源+公开网站；架构=托管/后台采集只读；节奏=A先行(托管锦标赛)→B实时增量。详见 docs/project-context.md 与 docs/architecture.md",
+  "last_updated": "2026-06-19",
+  "context": "产品设计阶段完成（见 docs/）。开源+公开网站；架构=托管/后台采集只读；节奏=A先行(托管锦标赛)→B实时增量。详见 docs/project-context.md 与 docs/architecture.md。2026-06-19 算法调优探索: Elo时间衰减(修Brazil滞后)+NB过度离散(修大比分低估) 双 no-go —— 动机真实(Elo滞后/全量过度离散var/λ=1.80)但128场回测/WC实测整体不收益(Elo衰减Brier变差+0.004; NB在WC过度离散弱var/λ=1.17≈Poisson混合,过度修正压低顶尖队), 代码留存默认关闭(half_life=0/nb_r=0), 216测试全过, memory记结论。又一组诚实 negative result",
   "tasks": [
     {
       "id": "P0-1",

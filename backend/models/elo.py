@@ -14,10 +14,11 @@ P0-3 Elo Rating 实现
 
 设计说明
 --------
-1. 【不加显式时间衰减】Elo 的"近期性"靠滚动更新本身实现——每场刷新都会把
-   rating 往最新方向拉, 老比赛的影响被中间的新比赛自然覆盖, 不需要人为降权.
-   显式按时间降权(ρ(t) 指数衰减)是 Dixon-Coles (P0-4) 的专属职责, 这里不重叠,
-   避免"双重计权"扭曲. 若回测发现 Elo 反应太慢, 一行调大全局 K 即可, 比加衰减机制干净.
+1. 【可选半衰期时间衰减, 默认关】Elo 的"近期性"默认靠滚动更新本身实现. 可选
+   half_life 参数给 delta 加指数衰减 exp(-ln2·Δt/half_life)(Δt = ref_date − match_date),
+   让旧比赛贡献衰减、近期比赛权重更高(修"强队近期下滑"反应迟钝, 见 memory
+   elo-recency-lag-brazil). 默认 half_life=0 = 不衰减(生产 κ=20 链路不变). 衰减基准
+   ref_date 应取评估时点 as_of(对齐 DC 的 time_decay_weights), 防未来信息泄露.
 2. 【防数据泄露】ratings_at(df, as_of) 只用严格早于 as_of 的比赛重算 → 时点快照,
    直接支撑 P0-7 的 walk-forward 回测(测试集比赛不污染训练).
    注: 每次 ratings_at 都从头重算一次(O(N)); 高频回测(数百场)建议在 P0-7 改用
@@ -42,13 +43,17 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Union
 
+import numpy as np
 import pandas as pd
+
+LN2 = float(np.log(2.0))
 
 # ============================================================
 # 常量
 # ============================================================
 INITIAL_RATING = 1500.0
 HOME_ADVANTAGE = 65.0  # 普通主场(海平面)基础优势(分); 可调
+DEFAULT_ELO_HALF_LIFE_DAYS = 0.0   # Elo 时间衰减半衰期(天); 0=不衰减(生产默认). >0 时旧比赛 delta 按 exp(-ln2·Δt/half_life) 衰减, 修"强队近期下滑"反应迟钝(见 memory elo-recency-lag-brazil)
 
 # —— 高原主场修正 (见设计说明第 4 条) ——
 # 海拔超过阈值的场地, H 按 ALTITUDE_PER_KM(分/千米)额外递增,
@@ -193,21 +198,31 @@ class EloModel:
         tournament: str,
         neutral: bool,
         city: object = None,
+        match_date: DateLike | None = None,
+        ref_date: DateLike | None = None,
+        half_life: float = 0.0,
     ) -> None:
         """单场比赛 → 双向更新 rating(零和: 主队+Δ 等于客队−Δ).
-        H 由城市海拔决定(home_advantage_for), 高原主场享更大主场优势 → ΔR unbiased."""
+        H 由城市海拔决定(home_advantage_for), 高原主场享更大主场优势 → ΔR unbiased.
+        half_life>0 且 match_date/ref_date 齐时, delta 按时间衰减 exp(-ln2·Δt/half_life)
+        缩放(双方同权重, 零和守恒). half_life=0 或日期缺 → 不衰减."""
         rh, ra = self._get(home), self._get(away)
         H = home_advantage_for(city, neutral)
         we = expected(rh, ra, H)
         w = result_value(home_goals, away_goals)
         delta = k_factor(tournament) * goal_multiplier(home_goals - away_goals) * (w - we)
+        if half_life and half_life > 0 and match_date is not None and ref_date is not None:
+            dt_days = (pd.Timestamp(ref_date) - pd.Timestamp(match_date)).total_seconds() / 86400.0
+            delta *= float(np.exp(-LN2 * max(0.0, dt_days) / half_life))
         self._ratings[home] = rh + delta
         self._ratings[away] = ra - delta
 
     # ---------- 公开 API ----------
-    def fit(self, df: pd.DataFrame) -> "EloModel":
+    def fit(self, df: pd.DataFrame, ref_date: DateLike | None = None,
+            half_life: float = 0.0) -> "EloModel":
         """按日期升序滚动更新全部比赛. 需含列:
-        date / home_team / away_team / home_score / away_score / tournament / neutral / city."""
+        date / home_team / away_team / home_score / away_score / tournament / neutral / city.
+        ref_date/half_life>0 时每场 delta 按时间衰减(基准 ref_date, 近期加权)."""
         cols = ["date", "home_team", "away_team", "home_score",
                 "away_score", "tournament", "neutral", "city"]
         rows = df[cols].sort_values("date").itertuples(index=False)
@@ -216,6 +231,7 @@ class EloModel:
                 r.home_team, r.away_team,
                 int(r.home_score), int(r.away_score),
                 r.tournament, bool(r.neutral), r.city,
+                match_date=r.date, ref_date=ref_date, half_life=half_life,
             )
         return self
 
@@ -227,16 +243,18 @@ class EloModel:
         """当前全部 rating 的拷贝."""
         return dict(self._ratings)
 
-    def ratings_at(self, df: pd.DataFrame, as_of: DateLike) -> dict[str, float]:
+    def ratings_at(self, df: pd.DataFrame, as_of: DateLike,
+                   half_life: float = 0.0) -> dict[str, float]:
         """as_of 时点的 rating 快照: 从空状态, 仅用 date < as_of 的比赛重算.
 
         → 防数据泄露: 严格排除 as_of 当天及之后的比赛(含测试集本身).
+        half_life>0 时启用时间衰减(基准=as_of, 对齐 DC time_decay), 让近期比赛权重更高.
         每次调用重算一次 O(N); 数百场的 walk-forward 回测建议在 P0-7 改顺序遍历.
         """
         cutoff = pd.Timestamp(as_of)
         hist = df[df["date"] < cutoff]
         snap = EloModel(self.initial, self.home_adv)
-        snap.fit(hist)
+        snap.fit(hist, ref_date=cutoff, half_life=half_life)
         return snap.ratings()
 
     def to_frame(self) -> pd.DataFrame:

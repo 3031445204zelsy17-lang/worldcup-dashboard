@@ -108,6 +108,65 @@ def draw_boost_scan(df: pd.DataFrame, variant: str,
 
 
 # ============================================================
+# 过度离散 (NB) 估计 + 比分分布校准 (算法调优改进2)
+# ============================================================
+def estimate_nb_r(df, dc_model, hosts_by_year=None):
+    """矩估计 Negative Binomial 离散参数 r (用 DC predict λ vs 实际进球).
+
+    NB(mean=λ, r): var=λ+λ²/r. 简化矩估计(忽略 λ 异质性): r = mean(λ²)/(var_goals − mean(λ)).
+    clip [1.0, 5.0]. 全量历史 var/λ≈1.80 → 预期 r≈1.5-2.5.
+    """
+    from match_predictor import wc_neutral_host
+    lam, goals = [], []
+    for _, m in df.iterrows():
+        hosts = (hosts_by_year or {}).get(int(m.get("year", 2026)), set())
+        neutral, hh, ha = wc_neutral_host(m["home_team"], m["away_team"], hosts)
+        p = dc_model.predict(m["home_team"], m["away_team"], neutral=neutral, host_home=hh, host_away=ha)
+        lam += [p["lambda_home"], p["lambda_away"]]
+        goals += [int(m["home_score"]), int(m["away_score"])]
+    lam = np.array(lam)
+    g = np.array(goals, dtype=float)
+    denom = g.var() - lam.mean()
+    r = float(np.mean(lam ** 2) / denom) if denom > 0 else 5.0
+    return float(np.clip(r, 1.0, 5.0))
+
+
+def goal_distribution_calibration(df, dc_model, nb_r=0.0, n_samples=20000,
+                                  max_goals=8, hosts_by_year=None, seed=42):
+    """比分分布校准: 实际进球分布 vs Poisson(采样) vs NB(采样).
+
+    对每场用 DC predict 的 λ, Poisson 采样 vs NB 采样 n_samples 次, 与实际进球比 var/mean + P(≥5) + 分桶.
+    Poisson var/mean≈1; 实际≈1.80(过度离散); NB 目标≈1.65-1.95. 验证 NB 是否还原大比分尾部.
+    """
+    from match_predictor import wc_neutral_host
+    rng = np.random.default_rng(seed)
+    lam_all, goals_all = [], []
+    for _, m in df.iterrows():
+        hosts = (hosts_by_year or {}).get(int(m.get("year", 2026)), set())
+        neutral, hh, ha = wc_neutral_host(m["home_team"], m["away_team"], hosts)
+        p = dc_model.predict(m["home_team"], m["away_team"], neutral=neutral, host_home=hh, host_away=ha)
+        lam_all += [p["lambda_home"], p["lambda_away"]]
+        goals_all += [int(m["home_score"]), int(m["away_score"])]
+    lam = np.array(lam_all)
+    goals = np.array(goals_all, dtype=float)
+    lam_rep = np.repeat(lam[:, None], n_samples, axis=1)
+    pois = rng.poisson(lam_rep).ravel()
+    if nb_r > 0:
+        mixed = rng.gamma(nb_r, lam_rep / nb_r)
+        nb = rng.poisson(mixed).ravel()
+    else:
+        nb = pois
+
+    def _stats(s):
+        s = s.astype(float)
+        return {"var_mean": float(s.var() / s.mean()), "p_ge5": float((s >= 5).mean()),
+                "mean_goals": float(s.mean()),
+                "buckets": [float((s == k).mean()) for k in range(max_goals + 1)]}
+    return {"actual": _stats(goals), "poisson": _stats(pois), "nb": _stats(nb),
+            "n_teams": int(len(goals))}
+
+
+# ============================================================
 # 主报告
 # ============================================================
 def main():

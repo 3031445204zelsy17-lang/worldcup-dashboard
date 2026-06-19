@@ -36,11 +36,13 @@ ROOT = Path(__file__).resolve().parents[2]
 HIST = ROOT / "data" / "processed" / "international_history.parquet"
 OUT = ROOT / "data" / "processed" / "backtest_2018_2022.parquet"
 OUT_SWEEP = ROOT / "data" / "processed" / "backtest_kappa_sweep.parquet"
+OUT_HALF_LIFE = ROOT / "data" / "processed" / "backtest_half_life_sweep.parquet"
 
 WINDOW_DAYS = 365 * 10           # DC 拟合窗口(10 年: 预测与全量差 0.01pp, 拟合快 5×)
 KAPPAS = {"elo": 1e4, "dc": 0.0, "dcs": 5.0}   # 变体 → κ(A 纯Elo / B 生产 / C 收缩)
 SWEEP_KAPPAS = {"k0": 0.0, "k3": 3.0, "k5": 5.0, "k10": 10.0, "k20": 20.0,
                 "k50": 50.0, "k100": 100.0, "k500": 500.0, "k1e4": 1e4}  # P0-8 κ 细扫
+HALF_LIFE_SWEEP = {0: 0.0, 730: 730.0, 1095: 1095.0, 1460: 1460.0, 2190: 2190.0}  # Elo 半衰期细扫(天): 0=基线 / 2,3,4,6 年
 
 # 2018/2022 东道主(本土场享基础 γ; 与 match_predictor.WC2026_HOSTS 分开, 历史东道主不同)
 HOSTS_BY_YEAR = {
@@ -52,32 +54,22 @@ HOSTS_BY_YEAR = {
 # ============================================================
 # Elo walk-forward: 单次顺序遍历, 按 date 分组取"赛前(date<该日)"快照
 # ============================================================
-def walk_forward_elo(df: pd.DataFrame, bt_mask: pd.Series) -> dict:
-    """顺序遍历全部比赛维护滚动 Elo; 对每个回测场, 记 date<该日 的赛前快照.
+def walk_forward_elo(df: pd.DataFrame, bt_mask: pd.Series, half_life: float = 0.0) -> dict:
+    """各回测场赛前(date < 该日)Elo 快照.
 
-    按 date 分组: 同日所有回测场共用"该日开盘前"的 Elo(对齐 DC 的 date<as_of 严格语义,
-    同日比赛不互相喂). 返回 {df_row_index -> {team: rating}}.
+    用 EloModel.ratings_at(df, d, half_life) per-call: 基准=该场日期(防泄露, 对齐 DC date<as_of);
+    half_life>0 时启用时间衰减(近期比赛权重更高, 修 Elo 滞后, 见 memory elo-recency-lag-brazil).
+    同日回测场共享快照(同日不互相喂). half_life=0 数值 == 历史顺序遍历版(红线 test_snapshot_matches_ratings_at).
+    返回 {df_row_index -> {team: rating}}.
     """
-    ratings: dict[str, float] = {}
     snapshots: dict = {}
-    for d, group in df.sort_values("date").groupby("date", sort=True):
-        # 先对当日所有回测场快照(用"该日之前"的 ratings, 严格 < date)
-        for idx in group.index:
-            if bool(bt_mask.loc[idx]):
-                snapshots[idx] = dict(ratings)
-        # 再施加当日全部比赛(更新 ratings)
-        for idx in group.index:
-            r = df.loc[idx]
-            h, a = r["home_team"], r["away_team"]
-            rh = ratings.get(h, INITIAL_RATING)
-            ra = ratings.get(a, INITIAL_RATING)
-            H = home_advantage_for(r["city"], bool(r["neutral"]))
-            we = expected(rh, ra, H)
-            w = result_value(int(r["home_score"]), int(r["away_score"]))
-            delta = (k_factor(r["tournament"])
-                     * goal_multiplier(int(r["home_score"]) - int(r["away_score"])) * (w - we))
-            ratings[h] = rh + delta
-            ratings[a] = ra - delta
+    cache: dict = {}   # (date, half_life) → ratings, 同日回测场共享
+    for idx in df.index[bt_mask]:
+        d = df.loc[idx, "date"]
+        key = (d, half_life)
+        if key not in cache:
+            cache[key] = EloModel().ratings_at(df, d, half_life=half_life)
+        snapshots[idx] = cache[key]
     return snapshots
 
 
@@ -275,6 +267,75 @@ def _print_sweep(res):
     print("=" * 74)
 
 
+def run_half_life_sweep(hist_path=HIST, out_path=OUT_HALF_LIFE,
+                        half_lifes=HALF_LIFE_SWEEP, kappas=KAPPAS, verbose=True):
+    """Elo 半衰期细扫: 各 half_life 衰减 Elo 快照 → 同一 DC MLE 派生收缩变体 → 预测.
+
+    效率关键: DC fit_at 每场只 1 次(κ=0 生产变体不用 Elo, 各 half_life 共享同一 MLE),
+    衰减只改 elo_snap → shrunk_variant post-hoc 派生(毫秒). 总耗时 ≈ 单次回测 DC fit(~898s).
+    产出 backtest_half_life_sweep.parquet(half_life × variant 一行) → go/no-go 决策输入.
+    """
+    df = pd.read_parquet(hist_path)
+    bt = df[(df["tournament"] == "FIFA World Cup") & (df["year"].isin([2018, 2022]))].sort_values("date")
+    bt_mask = pd.Series(df.index.isin(bt.index), index=df.index)
+    if verbose:
+        print(f"Elo 半衰期细扫: {len(bt)} 场, half_life 档(天) {list(half_lifes.values())}. 拟合中…")
+    t0 = time.time()
+    elo_snaps_by_hl = {hl: walk_forward_elo(df, bt_mask, half_life=hl) for hl in half_lifes}
+    if verbose:
+        print(f"  Elo 快照({len(half_lifes)} 档, 衰减基准=各场日期)完成, {time.time()-t0:.0f}s")
+    hits = {hl: {v: 0 for v in kappas} for hl in half_lifes}
+    briers = {hl: {v: 0.0 for v in kappas} for hl in half_lifes}
+    n = 0
+    for i, (idx, match) in enumerate(bt.iterrows()):
+        d = pd.Timestamp(match["date"])
+        win = df[(df["date"] >= d - pd.Timedelta(days=WINDOW_DAYS)) & (df["date"] < d)]
+        m_mle = DixonColes().fit_at(win, d)        # 1 次 MLE, 各 half_life 共享
+        actual = outcome(int(match["home_score"]), int(match["away_score"]))
+        onehot = {"H": 0.0, "D": 0.0, "A": 0.0}
+        onehot[actual] = 1.0
+        year = int(match["year"])
+        hosts = HOSTS_BY_YEAR.get(year, set())
+        neutral, host_home, host_away = wc_neutral_host(match["home_team"], match["away_team"], hosts)
+        for hl in half_lifes:
+            elo_snap = elo_snaps_by_hl[hl][idx]
+            for vname, kappa in kappas.items():
+                m_var = m_mle if kappa == 0.0 else m_mle.shrunk_variant(elo_snap, kappa)
+                p = m_var.predict(match["home_team"], match["away_team"],
+                                  neutral=neutral, host_home=host_home, host_away=host_away)
+                pH, pD, pA = p["home_win"], p["draw"], p["away_win"]
+                top = max([("H", pH), ("D", pD), ("A", pA)], key=lambda x: x[1])[0]
+                hits[hl][vname] += int(top == actual)
+                briers[hl][vname] += (pH - onehot["H"]) ** 2 + (pD - onehot["D"]) ** 2 + (pA - onehot["A"]) ** 2
+        n += 1
+        if verbose and (i + 1) % 16 == 0:
+            print(f"  {i+1}/{len(bt)} 场, {time.time()-t0:.0f}s")
+    rows = [{"half_life": hl, "variant": v, "kappa": kappas[v],
+             "accuracy": hits[hl][v] / n, "brier": briers[hl][v] / n}
+            for hl in half_lifes for v in kappas]
+    res = pd.DataFrame(rows)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    res.to_parquet(out_path, index=False)
+    if verbose:
+        print(f"\n已存 {out_path.name}, 总耗时 {time.time()-t0:.0f}s")
+        _print_half_life(res)
+    return res
+
+
+def _print_half_life(res):
+    print("\n" + "=" * 70)
+    print("Elo 半衰期细扫(准确率/Brier vs half_life; 仅收缩变体 dcs/elo 受 Elo 影响)")
+    print("-" * 70)
+    print(f"{'half_life':>10}{'变体':>8}{'准确率':>9}{'Brier':>9}")
+    for _, r in res.iterrows():
+        hl = "基线0" if r["half_life"] == 0 else f"{int(r['half_life'])}天"
+        print(f"{hl:>10}{r['variant']:>8}{r['accuracy']:>8.1%}{r['brier']:>9.4f}")
+    print("-" * 70)
+    print("go 标准: 衰减变体 dcs/elo 的 Brier ≤ 基线+0.002 & 准确率 ≥ 基线−1pp")
+    print("注: dc(κ=0) 变体不用 Elo → 各 half_life 下应完全相同(数值校验)")
+    print("=" * 70)
+
+
 if __name__ == "__main__":
     if "--summary" in sys.argv:
         # 从已存 parquet 直接出汇总(不重拟合), 便于复看 / P0-8 预热
@@ -284,5 +345,8 @@ if __name__ == "__main__":
     elif "--kappa-sweep" in sys.argv:
         # P0-8: κ 细扫(同 walk-forward, 单 MLE 派生多 κ), 找准确率-vs-风格权衡
         run_kappa_sweep()
+    elif "--half-life-sweep" in sys.argv:
+        # Elo 时间衰减半衰期细扫(修 Elo 滞后); 单 MLE 共享, 只换衰减 elo_snap
+        run_half_life_sweep()
     else:
         run_backtest()

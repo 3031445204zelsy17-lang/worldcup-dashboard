@@ -48,6 +48,9 @@ from backend.simulation import format as fmt  # noqa: E402
 DEFAULT_N = 10000
 # 加时赛 λ 衰减: 30min 加时 ≈ 90min 的 1/3. 加时赛实力仍有效(强队占优), 加时仍平才点球(≈50% 随机).
 EXTRA_TIME_LAMBDA_FRACTION = 1.0 / 3.0
+# 过度离散: 真实进球 var/λ≈1.80, Poisson(var=λ)低估大比分尾部. NB=Poisson(Gamma) 混合 var=λ+λ²/r.
+# r=0(默认)=Poisson(现状, 不破坏生产); r>0 时 MC 采样用 NB 还原比分分布(见 memory overdispersion-goal-distribution).
+DEFAULT_NB_R = 0.0
 ROUNDS_ORDER = ["group", "ro32", "ro16", "qf", "sf", "final"]   # advancement 降序
 
 
@@ -68,10 +71,12 @@ class MonteCarloSimulator:
     """
 
     def __init__(self, dc: DixonColes | None = None, groups: dict | None = None,
-                 fixtures: list | None = None, seed: int | None = None) -> None:
+                 fixtures: list | None = None, seed: int | None = None,
+                 nb_r: float = DEFAULT_NB_R) -> None:
         self.dc = dc or DixonColes.from_artifacts(DEFAULT_DC_PARQUET, DEFAULT_DC_JSON)
         self.groups = groups if groups is not None else GROUPS
         self.rng = np.random.default_rng(seed)
+        self.nb_r = float(nb_r)   # 过度离散参数: 0=Poisson(现状) / >0=NB(尾部厚, 还原大比分)
         # 向量化参数(team → index, attack/defense array)
         self.teams = list(self.dc.teams)
         self.team_idx = {t: i for i, t in enumerate(self.teams)}
@@ -93,6 +98,19 @@ class MonteCarloSimulator:
         lam_a = self.exp_mu * self.att[away_idx] / self.def_[home_idx]
         return lam_h, lam_a
 
+    # ---------------- 进球采样(可选过度离散 NB) ----------------
+    def _sample_goals(self, lam: np.ndarray, size=None) -> np.ndarray:
+        """采样进球数. nb_r=0 → Poisson(现状); nb_r>0 → Negative Binomial(Poisson-Gamma 混合).
+
+        NB 实现: 先采 Gamma(shape=r, scale=λ/r) → mean=λ var=λ²/r, 再叠 Poisson → 总 var=λ+λ²/r.
+        还原真实进球过度离散(var/λ≈1.80, 修 Poisson 低估大比分, 见 memory overdispersion-goal-distribution).
+        lam 可为标量或 array; size 透传给采样器.
+        """
+        if self.nb_r > 0:
+            mixed = self.rng.gamma(self.nb_r, lam / self.nb_r, size=size)
+            return self.rng.poisson(mixed)
+        return self.rng.poisson(lam, size=size)
+
     # ---------------- 淘汰赛分胜负(加时 + 点球) ----------------
     def _decide_knockout_winners(self, home_idx, away_idx, hg, ag, neu):
         """淘汰赛一场或多场分胜负 → 胜者 team_idx array.
@@ -110,8 +128,8 @@ class MonteCarloSimulator:
         if draw.any():
             dh = home_idx[draw]; da = away_idx[draw]
             dlh, dla = self._lambda(dh, da, neu[draw])
-            ehg = self.rng.poisson(dlh * EXTRA_TIME_LAMBDA_FRACTION)
-            eag = self.rng.poisson(dla * EXTRA_TIME_LAMBDA_FRACTION)
+            ehg = self._sample_goals(dlh * EXTRA_TIME_LAMBDA_FRACTION)
+            eag = self._sample_goals(dla * EXTRA_TIME_LAMBDA_FRACTION)
             tot_h = hg[draw] + ehg; tot_a = ag[draw] + eag
             still = (tot_h == tot_a)
             et_win = np.where(tot_h > tot_a, dh, da)
@@ -195,8 +213,8 @@ class MonteCarloSimulator:
 
         return_scores=True 时额外返回 (hg, ag)(N×72 采样比分, 供测试验证已完赛锁定).
         """
-        hg = self.rng.poisson(self._lam_h72, size=(n, 72)).astype(np.int16)
-        ag = self.rng.poisson(self._lam_a72, size=(n, 72)).astype(np.int16)
+        hg = self._sample_goals(self._lam_h72, size=(n, 72)).astype(np.int16)
+        ag = self._sample_goals(self._lam_a72, size=(n, 72)).astype(np.int16)
         # 锁定已完赛场实际比分
         if self._gfin.any():
             hg[:, self._gfin] = self._gacth[self._gfin]
@@ -289,8 +307,8 @@ class MonteCarloSimulator:
                     away_idx[k] = a
                     neu[k] = fmt.venue_neutral(self.teams[h], self.teams[a], venue)
                 lam_h, lam_a = self._lambda(home_idx, away_idx, neu)
-                hg = self.rng.poisson(lam_h)
-                ag = self.rng.poisson(lam_a)
+                hg = self._sample_goals(lam_h)
+                ag = self._sample_goals(lam_a)
                 win_idx = self._decide_knockout_winners(home_idx, away_idx, hg, ag, neu)
                 for k, mno in enumerate([m[0] for m in matches]):
                     sim_winners[mno] = int(win_idx[k])
@@ -301,8 +319,8 @@ class MonteCarloSimulator:
             a = self._resolve_slot(aslot, sim_winners, gw_row, gr_row, third_team, fmt.FINAL[0])
             neu = fmt.venue_neutral(self.teams[h], self.teams[a], venue)
             lam_h, lam_a = self._lambda(np.array([h]), np.array([a]), np.array([neu]))
-            fhg = self.rng.poisson(lam_h)[0]
-            fag = self.rng.poisson(lam_a)[0]
+            fhg = self._sample_goals(lam_h)[0]
+            fag = self._sample_goals(lam_a)[0]
             champion = int(self._decide_knockout_winners(
                 np.array([h]), np.array([a]), np.array([fhg]), np.array([fag]), np.array([neu]))[0])
             finalist = (h, a)

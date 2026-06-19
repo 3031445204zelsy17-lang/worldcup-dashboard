@@ -188,5 +188,52 @@ class TestRatingsAtLeakage(unittest.TestCase):
         self.assertAlmostEqual(snap["A"], 1512.2265, places=2)
 
 
+# ============================================================
+# 时间衰减 half_life (修 Elo 滞后, 默认关)
+# ============================================================
+class TestTimeDecay(unittest.TestCase):
+    def test_half_life_zero_no_decay(self):
+        # half_life=0 → 不衰减, 等同不传日期参数的调用
+        m1 = EloModel(); m1._apply_one("A", "B", 3, 0, "FIFA World Cup", False, "X",
+                                       match_date="2024-01-01", ref_date="2026-01-01", half_life=0.0)
+        m2 = EloModel(); m2._apply_one("A", "B", 3, 0, "FIFA World Cup", False, "X")
+        self.assertAlmostEqual(m1.get("A"), m2.get("A"), places=6)
+        self.assertAlmostEqual(m1.get("B"), m2.get("B"), places=6)
+
+    def test_decay_shrinks_old_match_delta(self):
+        # 同样比赛, match_date 离 ref_date 越远(越旧) → delta 衰减越多 → A 偏离 1500 越小
+        m_recent = EloModel(); m_recent._apply_one("A", "B", 3, 0, "FIFA World Cup", False, "X",
+                                                   match_date="2025-12-01", ref_date="2026-01-01", half_life=365.0)
+        m_old = EloModel(); m_old._apply_one("A", "B", 3, 0, "FIFA World Cup", False, "X",
+                                             match_date="2024-01-01", ref_date="2026-01-01", half_life=365.0)
+        self.assertLess(abs(m_old.get("A") - 1500.0), abs(m_recent.get("A") - 1500.0))
+
+    def test_decay_preserves_zero_sum(self):
+        # 衰减后双方仍零和: A 增量 == -B 增量(双方乘同一权重)
+        m = EloModel(); m._apply_one("A", "B", 3, 0, "FIFA World Cup", False, "X",
+                                     match_date="2024-01-01", ref_date="2026-01-01", half_life=365.0)
+        self.assertAlmostEqual(m.get("A") - 1500.0, -(m.get("B") - 1500.0), places=6)
+
+    def test_ref_date_none_no_decay(self):
+        # ref_date=None → 退化不衰减(即使 half_life>0)
+        m1 = EloModel(); m1._apply_one("A", "B", 3, 0, "FIFA World Cup", False, "X",
+                                       match_date="2024-01-01", ref_date=None, half_life=365.0)
+        m2 = EloModel(); m2._apply_one("A", "B", 3, 0, "FIFA World Cup", False, "X")
+        self.assertAlmostEqual(m1.get("A"), m2.get("A"), places=6)
+
+    def test_ratings_at_half_life_decays_old(self):
+        # ratings_at 带 half_life: 旧比赛贡献衰减 → 旧大胜的 A 比 no_decay 低
+        rows = [
+            {"date": "2022-01-01", "home_team": "A", "away_team": "B", "home_score": 5, "away_score": 0,
+             "tournament": "FIFA World Cup", "neutral": False, "city": "X", "country": "A"},
+            {"date": "2025-12-01", "home_team": "A", "away_team": "B", "home_score": 1, "away_score": 1,
+             "tournament": "Friendly", "neutral": False, "city": "X", "country": "A"},
+        ]
+        df = pd.DataFrame(rows); df["date"] = pd.to_datetime(df["date"])
+        no_decay = EloModel().ratings_at(df, "2026-01-01", half_life=0.0)
+        decay = EloModel().ratings_at(df, "2026-01-01", half_life=365.0)
+        self.assertLess(decay["A"], no_decay["A"], "旧大胜(2022)被衰减 → decay 的 A 应低于 no_decay")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
