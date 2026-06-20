@@ -154,6 +154,31 @@ class MatchDetailResponse(BaseModel):
     drivers: Drivers
 
 
+# ---------------- P2-1 赛中实时胜率 ----------------
+class LiveWinProb(BaseModel):
+    home_win: float | None = None
+    draw: float | None = None
+    away_win: float | None = None
+
+
+class TimelinePoint(BaseModel):
+    minute: int
+    home_win: float
+    draw: float
+    away_win: float
+    calculated_at: str | None = None
+
+
+class LiveResponse(BaseModel):
+    match: MatchSummary
+    minute: int
+    current_score: Score | None = None
+    live_win_prob: LiveWinProb
+    win_prob_timeline: list[TimelinePoint]
+    is_live: bool
+    data_source: str   # live_poisson / pre_match / unavailable
+
+
 class TeamDetailResponse(BaseModel):
     name: str
     group: str | None = None

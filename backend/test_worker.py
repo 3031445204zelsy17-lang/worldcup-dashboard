@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
 
@@ -313,7 +314,8 @@ class TestRunLoop(unittest.TestCase):
         pf = Path(tempfile.mkdtemp()) / "w.pid"
         # dc=object() 占位: truthy → run_forever 不 from_artifacts; tick 不重算时不碰它
         w.run_forever(self.conn, interval=0, max_ticks=3,
-                      collect_fn=fake_collect, pidfile=pf, dc=object())
+                      collect_fn=fake_collect, pidfile=pf, dc=object(),
+                      live_enabled=False)   # 关 live_tick 避免联网 ESPN
         self.assertEqual(len(calls), 3)
         self.assertFalse(pf.exists())            # finally 释放
 
@@ -328,9 +330,98 @@ class TestRunLoop(unittest.TestCase):
             MockMC.return_value.to_dataframe.return_value = []
             MockMC.return_value.save.return_value = 288
             w.run_forever(self.conn, interval=0, max_ticks=2,
-                          collect_fn=fake_collect, dc=object())
+                          collect_fn=fake_collect, dc=object(),
+                          live_enabled=False)   # 关 live_tick 避免联网
         self.assertEqual(len(calls), 2)
         self.assertEqual(MockMC.return_value.save.call_count, 2)
+
+
+def _live_dc(teams=("Spain", "Brazil")):
+    """synthetic DC for live_tick tests(队名落 48 队口径, seed_teams 能查到)."""
+    return SimpleNamespace(
+        mu=0.0, gamma=0.25,
+        attack={teams[0]: 1.5, teams[1]: 1.0},
+        defense={teams[0]: 1.0, teams[1]: 1.3},
+        teams=list(teams))
+
+
+class TestLiveTick(unittest.TestCase):
+    """P2-1 live_tick: ESPN live → LiveMatchSimulator → predictions 写入 + helpers(不联网)."""
+
+    def setUp(self):
+        self.conn = init_db(":memory:", all_tables=True)
+        seed_teams(self.conn)
+        m = Match(date="2026-06-19", home="Spain", away="Brazil",
+                  home_score=None, away_score=None, status=Status.LIVE,
+                  neutral=True, source="martj42")
+        MatchCache(self.conn).upsert_matches([m])
+        self.dc = _live_dc()
+        self.match_id = w._find_match_id(self.conn, "Spain", "Brazil")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_find_match_id_by_team_suffix(self):
+        self.assertIsNotNone(self.match_id)
+        self.assertIsNone(w._find_match_id(self.conn, "Mars", "Venus"))
+
+    def test_count_reds_normalizes_names(self):
+        # ESPN competitors 'Cape Verde' vs events 'Cabo Verde' → 归一后算客队红牌
+        events = [{"type": "card", "is_red": True, "team": "Cabo Verde", "minute": 60}]
+        self.assertEqual(w._count_reds(events, "Spain", "Cape Verde"), (0, 1))
+
+    def test_no_live_returns_empty(self):
+        res = w.live_tick(self.conn, dc=self.dc, fetch_scoreboard_fn=lambda: [])
+        self.assertEqual(res.live_matches, 0)
+        self.assertEqual(res.updated, 0)
+
+    def test_no_network_returns_empty(self):
+        res = w.live_tick(self.conn, dc=self.dc, allow_network=False)
+        self.assertEqual(res.updated, 0)
+
+    def test_scoreboard_degrade_warns(self):
+        res = w.live_tick(self.conn, dc=self.dc, fetch_scoreboard_fn=lambda: None)
+        self.assertEqual(res.updated, 0)
+        self.assertTrue(any("scoreboard" in x for x in res.warnings))
+
+    def test_live_writes_prediction(self):
+        sb = [{"match_id": "1", "status_state": "in", "home": "Spain", "away": "Brazil",
+               "home_score": 1, "away_score": 0}]
+        summ = {"match_id": "1", "status_state": "in", "home": "Spain", "away": "Brazil",
+                "home_score": 1, "away_score": 0, "minute": 70,
+                "events": [{"type": "card", "is_red": True, "team": "Brazil",
+                            "player": "X", "minute": 60}]}
+        res = w.live_tick(self.conn, dc=self.dc, seed=42,
+                          fetch_scoreboard_fn=lambda: sb,
+                          fetch_summary_fn=lambda mid: summ)
+        self.assertEqual(res.live_matches, 1)
+        self.assertEqual(res.updated, 1)
+        cnt = self.conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+        self.assertEqual(cnt, 1)
+        minute, hw, aw = self.conn.execute(
+            "SELECT minute, home_win_prob, away_win_prob FROM predictions").fetchone()
+        self.assertEqual(minute, 70)
+        self.assertGreater(hw, aw)    # Spain 1-0 70' + Brazil 红牌 → 主胜 > 客胜
+
+    def test_upsert_idempotent(self):
+        mid = self.match_id
+        w._upsert_prediction(self.conn, mid, 70,
+                             {"home_win": 0.6, "draw": 0.2, "away_win": 0.2}, "v1")
+        w._upsert_prediction(self.conn, mid, 70,
+                             {"home_win": 0.7, "draw": 0.2, "away_win": 0.1}, "v1")
+        cnt = self.conn.execute(
+            "SELECT COUNT(*) FROM predictions WHERE match_id=? AND minute=70", (mid,)).fetchone()[0]
+        self.assertEqual(cnt, 1)      # 幂等: 同 minute+version 只 1 行(更新非新增)
+
+    def test_team_not_in_dc_skipped(self):
+        sb = [{"match_id": "1", "status_state": "in", "home": "Mars", "away": "Venus"}]
+        summ = {"match_id": "1", "status_state": "in", "home": "Mars", "away": "Venus",
+                "home_score": 0, "away_score": 0, "minute": 30, "events": []}
+        res = w.live_tick(self.conn, dc=self.dc,
+                          fetch_scoreboard_fn=lambda: sb,
+                          fetch_summary_fn=lambda mid: summ)
+        self.assertEqual(res.updated, 0)
+        self.assertTrue(any("未落 DC" in x for x in res.warnings))
 
 
 if __name__ == "__main__":

@@ -269,6 +269,18 @@ def filter_matches(matches, *, date: str | None = None, team: str | None = None,
     return out
 
 
+def prediction_timeline(conn: sqlite3.Connection, match_id: int) -> list[dict]:
+    """P2-1: predictions 表该 match 的 minute→probs 时间线(升序). worker live_tick 写入.
+
+    无数据(未开赛 / worker 未跑) → []. 前端画实时胜率曲线 + 取最新条目作当前实时胜率.
+    """
+    rows = conn.execute(
+        "SELECT minute, home_win_prob, draw_prob, away_win_prob, calculated_at "
+        "FROM predictions WHERE match_id=? ORDER BY minute", (match_id,)).fetchall()
+    return [{"minute": int(r[0]), "home_win": float(r[1]), "draw": float(r[2]),
+             "away_win": float(r[3]), "calculated_at": r[4]} for r in rows]
+
+
 # ============================================================
 # 序列化: predict dict → JSON 友好
 # ============================================================

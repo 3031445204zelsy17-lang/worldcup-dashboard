@@ -6,6 +6,7 @@ import ErrorState from '../components/ErrorState.jsx'
 import TeamFlag from '../components/TeamFlag.jsx'
 import ProbabilityBar from '../components/ProbabilityBar.jsx'
 import DriversPanel from '../components/DriversPanel.jsx'
+import LiveWinProbabilityCurve from '../components/LiveWinProbabilityCurve.jsx'
 
 export default function MatchDetail() {
   const { key } = useParams()
@@ -88,9 +89,7 @@ export default function MatchDetail() {
         </div>
       )}
 
-      <section className="bg-slate-50 rounded-xl border border-dashed border-slate-300 p-4 text-center text-sm text-slate-400">
-        📈 实时胜率曲线(赛中)留 B 阶段
-      </section>
+      <LiveWinProbabilityCurve matchKey={matchKey} />
 
       <DriversPanel drivers={data.drivers} />
     </div>

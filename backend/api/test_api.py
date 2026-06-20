@@ -207,6 +207,45 @@ class TestApi(unittest.TestCase):
     def test_match_detail_404(self):
         self.assertEqual(self.client.get("/api/matches/" + quote("nope|x|y")).status_code, 404)
 
+    # ---- P2-1 live ----
+    def test_live_pre_match_fallback(self):
+        # upcoming + 无 predictions → 降级赛前预测(FakePredictor)
+        key = quote("2026-06-17|Spain|Japan")
+        b = self.client.get(f"/api/matches/{key}/live").json()
+        self.assertEqual(b["data_source"], "pre_match")
+        self.assertEqual(b["minute"], 0)
+        self.assertEqual(b["live_win_prob"]["home_win"], 0.5)    # FakePredictor
+        self.assertEqual(b["win_prob_timeline"], [])
+
+    def test_live_with_timeline(self):
+        # 手动插 predictions 模拟 worker live_tick 写入 → data_source=live_poisson
+        import sqlite3 as _sq
+        conn = _sq.connect(self.dbpath)
+        mid = conn.execute("SELECT id FROM matches WHERE match_key=?",
+                           ("2026-06-17|Spain|Japan",)).fetchone()[0]
+        conn.executemany(
+            "INSERT INTO predictions (match_id, minute, home_win_prob, draw_prob, "
+            "away_win_prob, model_version, calculated_at) VALUES (?,?,?,?,?,?,?)",
+            [(mid, 0, 0.50, 0.30, 0.20, "live_poisson_v1", "t0"),
+             (mid, 45, 0.60, 0.25, 0.15, "live_poisson_v1", "t1"),
+             (mid, 70, 0.80, 0.12, 0.08, "live_poisson_v1", "t2")])
+        conn.commit()
+        try:
+            key = quote("2026-06-17|Spain|Japan")
+            b = self.client.get(f"/api/matches/{key}/live").json()
+            self.assertEqual(b["data_source"], "live_poisson")
+            self.assertEqual(b["minute"], 70)                    # 最新条目
+            self.assertEqual(len(b["win_prob_timeline"]), 3)
+            self.assertAlmostEqual(b["live_win_prob"]["home_win"], 0.80)
+        finally:
+            conn.execute("DELETE FROM predictions WHERE match_id=?", (mid,))
+            conn.commit()
+            conn.close()
+
+    def test_live_404(self):
+        self.assertEqual(
+            self.client.get("/api/matches/" + quote("nope|x|y") + "/live").status_code, 404)
+
     # ---- methodology ----
     def test_methodology(self):
         b = self.client.get("/api/methodology").json()

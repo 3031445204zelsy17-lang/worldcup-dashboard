@@ -120,6 +120,12 @@ CREATE INDEX IF NOT EXISTS idx_tph_team_time
 ON tournament_probs_history(team_id, calculated_at)
 """
 
+# P2-1: predictions 幂等唯一约束(同场同分钟同模型版本只留一行, worker upsert 防曲线膨胀)
+PREDICTIONS_UNIQUE_DDL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pred_match_min_ver
+ON predictions(match_id, minute, model_version)
+"""
+
 LINEUPS_DDL = """
 CREATE TABLE IF NOT EXISTS lineups (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -242,6 +248,7 @@ def init_db(path: str | Path = DEFAULT_DB, all_tables: bool = False) -> sqlite3.
         conn.execute(ddl)
     if all_tables:
         conn.execute(TP_HISTORY_INDEX_DDL)   # history 轨迹索引(非表, 单独建)
+        conn.execute(PREDICTIONS_UNIQUE_DDL)  # P2-1 predictions 幂等唯一约束
     conn.commit()
     return conn
 

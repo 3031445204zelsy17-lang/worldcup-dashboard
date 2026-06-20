@@ -17,3 +17,20 @@ export function useApi(path) {
   }, [path])
   return { data, error, loading }
 }
+
+/** 轮询 hook: usePollingApi(path, intervalMs) → {data, error}.
+ * 立即取一次 + 每 intervalMs 重取; path 变化重置; 卸载 clearInterval. 用于 P2-1 实时胜率曲线. */
+export function usePollingApi(path, intervalMs = 30000) {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    let alive = true
+    const poll = () => fetchJson(path)
+      .then((d) => { if (alive) { setData(d); setError(null) } })
+      .catch((e) => { if (alive) setError(e) })
+    poll()                                              // 立即取一次(不等首个 interval)
+    const timer = setInterval(poll, intervalMs)
+    return () => { alive = false; clearInterval(timer) }
+  }, [path, intervalMs])
+  return { data, error }
+}
