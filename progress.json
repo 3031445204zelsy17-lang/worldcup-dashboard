@@ -2,8 +2,8 @@
   "project": "World Cup Probability Dashboard 2026",
   "deadline": "2026-07-19",
   "repo": "",
-  "last_updated": "2026-06-19",
-  "context": "产品设计阶段完成（见 docs/）。开源+公开网站；架构=托管/后台采集只读；节奏=A先行(托管锦标赛)→B实时增量。详见 docs/project-context.md 与 docs/architecture.md。2026-06-19 算法调优探索: Elo时间衰减(修Brazil滞后)+NB过度离散(修大比分低估) 双 no-go —— 动机真实(Elo滞后/全量过度离散var/λ=1.80)但128场回测/WC实测整体不收益(Elo衰减Brier变差+0.004; NB在WC过度离散弱var/λ=1.17≈Poisson混合,过度修正压低顶尖队), 代码留存默认关闭(half_life=0/nb_r=0), 216测试全过, memory记结论。又一组诚实 negative result。2026-06-19 P1-7 部署方案调整(a9aae29): 砍 Vercel→单 Azure 域名同源(app.py SPA mount + Dockerfile multi-stage 前端), 动机=vercel.app 内地常被墙; SPA 端到端实测过 + API 零回归; 预存 pyarrow19 读旧 parquet(非本次引入, 不阻塞 CI 19写19读自洽); passes 仍 false 待实际部署。[6/19] provision 实跑卡学校订阅 ACA 环境全局配额(=1 被学校应用占), 放弃部署; GitHub 仓库已建 + 单域名代码就绪; 复活=学生计划/临时隧道/换平台",
+  "last_updated": "2026-06-20",
+  "context": "产品设计阶段完成（见 docs/）。开源+公开网站；架构=托管/后台采集只读；节奏=A先行(托管锦标赛)→B实时增量。详见 docs/project-context.md 与 docs/architecture.md。2026-06-19 算法调优探索: Elo时间衰减(修Brazil滞后)+NB过度离散(修大比分低估) 双 no-go —— 动机真实(Elo滞后/全量过度离散var/λ=1.80)但128场回测/WC实测整体不收益(Elo衰减Brier变差+0.004; NB在WC过度离散弱var/λ=1.17≈Poisson混合,过度修正压低顶尖队), 代码留存默认关闭(half_life=0/nb_r=0), 216测试全过, memory记结论。又一组诚实 negative result。2026-06-19 P1-7 部署方案调整(a9aae29): 砍 Vercel→单 Azure 域名同源(app.py SPA mount + Dockerfile multi-stage 前端), 动机=vercel.app 内地常被墙; SPA 端到端实测过 + API 零回归; 预存 pyarrow19 读旧 parquet(非本次引入, 不阻塞 CI 19写19读自洽); passes 仍 false 待实际部署。[6/19] provision 实跑卡学校订阅 ACA 环境全局配额(=1 被学校应用占), 放弃部署; GitHub 仓库已建 + 单域名代码就绪; 复活=学生计划/临时隧道/换平台。[6/20] P2-1 赛中实时胜率完成(LiveMatchSimulator 剩余时间Poisson+红牌0.85ⁿ/1.20ⁿ修正 + ESPN免费采集替代付费API + /live端点 + 前端曲线, 49新测试零回归, npm build过); 本地端到端真实验证待pyarrow修(重生成DC artifacts); 三用途赛前升级/P2-2推送/P2-3晨起回看留后续; P2-1代码完成但真实上线待P1-8部署。",
   "tasks": [
     {
       "id": "P0-1",
@@ -229,9 +229,10 @@
       "dependencies": [
         "P1-8"
       ],
-      "passes": false,
+      "passes": true,
       "assignee": "Claude",
-      "note": "[6/19 待办汇总] P2 一次性优化输入(详见 memory p2-data-driven-optimizations): events/lineup API 接入设计成支持三用途——(a) xG 重塑比分分布(大比分重尾, count-level NB 已 no-go) (b) lineup→player-impact(伤病/状态) (c) 近期状态校准 Elo 滞后。P1 count-level 已到极限(三轮回测 no-go), 真解在 P2 事件数据。共享数据层一次接入三用途。"
+      "completed_at": "2026-06-20",
+      "note": "赛中实时胜率模型完成(commit 06aa29d). [模型] LiveMatchSimulator(backend/simulation/live_odds.py): λ_rem=λ_full×(90-min)/90 线性缩放 + 红牌修正(被罚方进攻×0.85**n / 对手×1.20**n 累乘) + Poisson×20000 + 当前比分累加=终场胜平负; 淘汰赛90min平→加时λ_full×1/3(复用mc.EXTRA_TIME)→点球50/50; 复用mc._lambda向量化λ. 自洽边界(minute=0+0:0+0红牌≈赛前λ_full; 89min+1:0主胜≥0.95; 90min锁比分; 红牌方向单调). [数据源] ESPN非官方免费API(替代description的付费API, plan+用户确认): scoreboard(赛程+status pre/in/post+比分)+summary(keyEvents goal/card/sub+clock秒→分钟+boxscore比分+rosters阵容留未来lineup). 队名映射ESPN→martj42口径(dict Türkiye→Turkey等+difflib兜底; Cape Verde/Cabo Verde不一致坑归一). 优雅降级(网络/格式变→None不崩). [worker] live_tick(检测status=in→summary→红牌累计→LiveMatchSimulator→upsert predictions幂等+更新matches live比分); run_forever动态interval(有live→60s / 无→300s常规tick); --once-live CLI. predictions幂等唯一约束(match_id,minute,model_version). [API] GET /api/matches/{key}/live(prediction_timeline+实时胜率最新+当前比分+data_source live_poisson/pre_match降级/unavailable; 只读DB不调ESPN, 符合用户访问0次外部API). [前端] LiveWinProbabilityCurve(LineChart三线主胜emerald/平amber/客胜rose + LIVE徽标 + usePollingApi 30s轮询) 替换MatchDetail:91-93占位. [验证] 49新测试全过(live_odds19边界/红牌/knockout + espn21离线fixture/映射/降级 + worker live_tick6 DB写入/幂等/队名 + api /live3 pre_match/timeline/404); 247全量零回归(1fail+7error全预存pyarrow读旧parquet, 和P1同); npm build过. [约束调整vs description] description说付费API→实际ESPN免费非官方; memory三用途(xG/lineup/状态校准)留后续(ESPN rosters已为lineup预留); WebSocket推送(P2-2)/晨起回看飞书(P2-3)留后续; P1-8(部署上线)未完成→P2-1代码完成但真实赛期上线待部署. [本地端到端限制] pyarrow19读旧DC parquet→LiveMatchSimulator生产from_artifacts本地失败, 单测用synthetic DC绕过(模型逻辑全验证), 真实ESPN live联调待重生成DC artifacts(load_results→elo→dixon_coles ~15min). [诚实] 红牌系数0.85/1.20战术常识(少一人进攻资源降约1/7, 防守损失>进攻损失)非本数据拟合, model_version=live_poisson_v1透明, 留P2-2回测调参."
     },
     {
       "id": "P2-2",
